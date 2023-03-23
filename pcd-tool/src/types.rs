@@ -4,9 +4,3 @@ pub enum FileFormat {
     NewslabPcd,
     Pcap,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum LidarType {
-    Vlp16,
-    Vlp32,
-}

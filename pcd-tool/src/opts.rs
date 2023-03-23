@@ -1,5 +1,7 @@
+use anyhow::bail;
 use clap::Parser;
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
+use velodyne_lidar::{ProductID, ReturnMode};
 
 #[derive(Debug, Clone, Parser)]
 pub enum Opts {
@@ -12,9 +14,33 @@ pub struct Info {
     pub file: PathBuf,
 }
 
-#[derive(Debug, Clone, Parser)]
 /// Point cloud file conversion.
+#[derive(Debug, Clone, Parser)]
 pub struct Convert {
-    pub input_path: PathBuf,
-    pub output_path: PathBuf,
+    #[clap(short, long)]
+    pub input: PathBuf,
+    #[clap(short, long)]
+    pub output: PathBuf,
+    #[clap(long)]
+    pub velodyne_model: Option<ProductID>,
+    #[clap(long)]
+    pub velodyne_return_mode: Option<VelodyneReturnMode>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VelodyneReturnMode(pub ReturnMode);
+
+impl FromStr for VelodyneReturnMode {
+    type Err = anyhow::Error;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let mode = match text {
+            "strongest" => ReturnMode::Strongest,
+            "last" => ReturnMode::Last,
+            "dual" => ReturnMode::Dual,
+            _ => bail!("invalid return mode '{text}'"),
+        };
+
+        Ok(Self(mode))
+    }
 }

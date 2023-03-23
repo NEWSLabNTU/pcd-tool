@@ -1,20 +1,20 @@
-use crate::types::{FileFormat, LidarType};
-use anyhow::{anyhow, bail, Context, Result};
-use console::Term;
-use dialoguer::{Input, Select};
-use iterator_ext::IteratorExt;
-use lidar_utils::velodyne::{self, FrameConverter as _};
-use num_traits::ToPrimitive;
+use crate::{
+    opts::{Convert, VelodyneReturnMode},
+    types::FileFormat,
+};
+use anyhow::{anyhow, bail, Result};
 use pcd_format::{LibpclPoint, NewslabV1Point};
-use std::{f64, fs, iter, path::Path};
+use pcd_rs::DataKind;
+use std::{f64, fs, path::Path};
+use velodyne_lidar::{
+    kinds::FormatKind,
+    point::{Measurement, MeasurementDual, PointD, PointS},
+    ProductID, ReturnMode,
+};
 
-pub fn convert<PI, PO>(input_path: PI, output_path: PO) -> Result<()>
-where
-    PI: AsRef<Path>,
-    PO: AsRef<Path>,
-{
-    let input_path = input_path.as_ref();
-    let output_path = output_path.as_ref();
+pub fn convert(opts: Convert) -> Result<()> {
+    let input_path = &opts.input;
+    let output_path = &opts.output;
 
     let input_format = guess_file_format(input_path).ok_or_else(|| {
         anyhow!(
@@ -39,10 +39,26 @@ where
                     output_path.display()
                 );
             }
-            pcap_to_pcd(input_path, output_path)?;
+            let velodyne_model = opts
+                .velodyne_model
+                .ok_or_else(|| anyhow!("--velodyne-mode must be set"))?;
+            let velodyne_return_mode = opts
+                .velodyne_return_mode
+                .ok_or_else(|| anyhow!("--velodyne-return-mode must be set"))?;
+
+            velodyne_pcap_to_libpcl_pcd(
+                input_path,
+                output_path,
+                velodyne_model,
+                velodyne_return_mode,
+            )?;
         }
         (FileFormat::LibpclPcd, None) | (FileFormat::NewslabPcd, None) => {
-            bail!("You must specify a output file when transforming pcd/newslab-pcd");
+            bail!(
+                "You must
+                specify a output file when transforming
+                pcd/newslab-pcd"
+            );
         }
 
         (FileFormat::LibpclPcd, Some(FileFormat::LibpclPcd))
@@ -170,157 +186,238 @@ where
     Ok(())
 }
 
-pub fn pcap_to_pcd<I, O>(input_file: I, output_dir: O) -> Result<()>
+fn velodyne_pcap_to_libpcl_pcd<I, O>(
+    input_file: I,
+    output_dir: O,
+    model: ProductID,
+    mode: VelodyneReturnMode,
+) -> Result<()>
 where
     I: AsRef<Path>,
     O: AsRef<Path>,
 {
-    let input_file = input_file.as_ref();
+    use velodyne_lidar::{
+        config::Config,
+        iter::{convert::packet_to_frame_xyz, packet::from_file},
+    };
+
+    use FormatKind as F;
+    use ProductID as P;
+    use ReturnMode as R;
+
+    // closures
+    let map_measurement = |measurement: Measurement| {
+        let [x, y, z] = measurement.xyz;
+        [
+            x.as_meters() as f32,
+            y.as_meters() as f32,
+            z.as_meters() as f32,
+        ]
+    };
+
+    let map_point_single = |point: PointS| map_measurement(point.measurement);
+    let map_point_dual = |point: PointD| {
+        let MeasurementDual {
+            strongest: strongest_measure,
+            last: last_measure,
+        } = point.measurements;
+        let strongest_point = map_measurement(strongest_measure);
+        let last_point = map_measurement(last_measure);
+        (strongest_point, last_point)
+    };
+
+    // create the velodyne-lidar config
+    let config = match (model, mode.0) {
+        (P::VLP16, R::Last) => Config::new_vlp_16_last(),
+        (P::VLP16, R::Strongest) => Config::new_vlp_16_strongest(),
+        (P::VLP16, R::Dual) => Config::new_vlp_16_dual(),
+
+        (P::PuckHiRes, R::Last) => Config::new_puck_hires_last(),
+        (P::PuckHiRes, R::Strongest) => Config::new_puck_hires_strongest(),
+        (P::PuckHiRes, R::Dual) => Config::new_puck_hires_dual(),
+
+        (P::PuckLite, R::Last) => Config::new_puck_lite_last(),
+        (P::PuckLite, R::Strongest) => Config::new_puck_lite_strongest(),
+        (P::PuckLite, R::Dual) => Config::new_puck_lite_dual(),
+
+        (P::VLP32C, R::Last) => Config::new_vlp_32c_last(),
+        (P::VLP32C, R::Strongest) => Config::new_vlp_32c_strongest(),
+        (P::VLP32C, R::Dual) => Config::new_vlp_32c_dual(),
+
+        _ => bail!("The model '{}' is not supported", model),
+    };
+
+    // Create output directories
     let output_dir = output_dir.as_ref();
+    let strongest_output_dir = output_dir.join("strongest");
+    let last_output_dir = output_dir.join("last");
+    fs::create_dir(output_dir)?;
 
-    // Get some user informations
-    let term = Term::stdout();
-    let lidar_type = {
-        let choice = Select::new()
-            .with_prompt("What kind of lidar was used to collect this pcap?")
-            .items(&["Vlp16", "Vlp32"])
-            .default(1)
-            .interact_on(&term)?;
-
-        match choice {
-            0 => LidarType::Vlp16,
-            1 => LidarType::Vlp32,
-            _ => unreachable!(),
+    match mode.0 {
+        R::Strongest => {
+            fs::create_dir(&strongest_output_dir)?;
         }
-    };
-    let target_type = {
-        let choice = Select::new()
-            .with_prompt("What type of file do you want to convert?")
-            .items(&["standard pcd", "newslab pcd"])
-            .default(0)
-            .interact_on(&term)?;
-
-        match choice {
-            0 => FileFormat::LibpclPcd,
-            1 => FileFormat::NewslabPcd,
-            _ => unreachable!(),
+        R::Last => {
+            fs::create_dir(&last_output_dir)?;
         }
-    };
-    let start_number: usize = Input::new()
-        .with_prompt("Which frame number do you want to transform from?")
-        .default(0)
-        .interact()?;
-    let number_of_frames: usize = Input::new()
-        .with_prompt("How many frames do you want to transform (0 for all)?")
-        .default(0)
-        .interact()?;
+        R::Dual => {
+            fs::create_dir(&strongest_output_dir)?;
+            fs::create_dir(&last_output_dir)?;
+        }
+    }
 
-    // prepare pcap capture handlers
-    let mut cap = pcap::Capture::from_file(input_file)
-        .with_context(|| format!("unable to open file '{}'", input_file.display()))?;
-    let mut frame_converter = match lidar_type {
-        LidarType::Vlp16 => velodyne::Dynamic_FrameConverter::from_config(
-            velodyne::Config::puck_hires_dynamic_return(velodyne::ReturnMode::StrongestReturn)
-                .into_dyn(),
-        ),
-        LidarType::Vlp32 => velodyne::Dynamic_FrameConverter::from_config(
-            velodyne::Config::vlp_32c_dynamic_return(velodyne::ReturnMode::StrongestReturn)
-                .into_dyn(),
-        ),
-    };
+    let packets = from_file(input_file)?.filter_map(|packet| {
+        let packet = match packet {
+            Ok(packet) => packet,
+            Err(err) => {
+                eprintln!("{err:?}");
+                return None;
+            }
+        };
+        packet.try_into_data().ok()
+    });
+    let frames = packet_to_frame_xyz(config, packets)?;
 
-    fs::create_dir_all(output_dir)
-        .with_context(|| format!("unable to create directory {}", output_dir.display()))?;
+    match mode.0 {
+        R::Strongest => {
+            frames.enumerate().try_for_each(|(index, frame)| {
+                let file_name = format!("{:06}.pcd", index);
+                let pcd_file = strongest_output_dir.join(file_name);
 
-    match target_type {
-        FileFormat::LibpclPcd => {
-            use velodyne::DynamicReturnPoints as DP;
+                match frame {
+                    F::Single16(frame) => {
+                        let width = frame.firings.len();
+                        let points = frame.into_point_iter().map(map_point_single);
+                        create_pcd_file_single(points, pcd_file, width, 16)?;
+                    }
+                    F::Single32(frame) => {
+                        let width = frame.firings.len();
+                        let points = frame.into_point_iter().map(map_point_single);
+                        create_pcd_file_single(points, pcd_file, width, 32)?;
+                    }
+                    _ => unreachable!(),
+                }
 
-            // Create a packet iterator
-            let packet_iter = iter::from_fn(|| -> Option<Option<_>> {
-                let raw_packet = cap.next().ok()?;
-                let velodyne_packet = velodyne::DataPacket::from_pcap(&raw_packet).ok();
-                Some(velodyne_packet)
-            })
-            .flatten();
-
-            // Cconvert packets to frames
-            let frame_iter = packet_iter
-                .map(Ok)
-                .try_flat_map(|packet| frame_converter.convert::<velodyne::DataPacket>(packet))
-                .enumerate()
-                .map(|(index, frame)| anyhow::Ok((index, frame?)));
-
-            // Restrict the range of frame indices
-            let frame_iter = frame_iter.skip(start_number);
-            let mut frame_iter: Box<dyn Iterator<Item = Result<(usize, DP)>> + Sync + Send> =
-                if number_of_frames > 0 {
-                    Box::new(frame_iter.take(number_of_frames))
-                } else {
-                    Box::new(frame_iter)
-                };
-
-            frame_iter.try_for_each(|args| -> Result<_> {
-                use uom::si::length::meter;
-
-                let (index, frame) = args?;
-                println!("transforming frame number {}", index);
-
-                let points: Vec<_> = match frame {
-                    DP::Single(points) => points
-                        .into_iter()
-                        .map(|point| point.data.position)
-                        .map(|[x, y, z]| [x.get::<meter>(), y.get::<meter>(), z.get::<meter>()])
-                        .collect(),
-                    DP::Dual(points) => points
-                        .into_iter()
-                        .map(|point| point.strongest_return_data.position)
-                        .map(|[x, y, z]| [x.get::<meter>(), y.get::<meter>(), z.get::<meter>()])
-                        .collect(),
-                };
-
-                let pcd_file = output_dir.join(format!("{:06}.pcd", index));
-                save_pcd(points, &pcd_file, pcd_rs::DataKind::Ascii).with_context(|| {
-                    format!("failed to create the pcd file '{}'", pcd_file.display())
-                })?;
-
-                Ok(())
+                anyhow::Ok(())
             })?;
         }
-        FileFormat::NewslabPcd => {
-            todo!()
+        R::Last => {
+            frames.enumerate().try_for_each(|(index, frame)| {
+                let file_name = format!("{:06}.pcd", index);
+                let pcd_file = last_output_dir.join(file_name);
+
+                match frame {
+                    F::Single16(frame) => {
+                        let width = frame.firings.len();
+                        let points = frame.into_point_iter().map(map_point_single);
+                        create_pcd_file_single(points, pcd_file, width, 16)?;
+                    }
+                    F::Single32(frame) => {
+                        let width = frame.firings.len();
+                        let points = frame.into_point_iter().map(map_point_single);
+                        create_pcd_file_single(points, pcd_file, width, 32)?;
+                    }
+                    _ => unreachable!(),
+                }
+
+                anyhow::Ok(())
+            })?;
         }
-        _ => unreachable!(),
+        R::Dual => {
+            frames.enumerate().try_for_each(|(index, frame)| {
+                let file_name = format!("{:06}.pcd", index);
+                let pcd_file_strongest = strongest_output_dir.join(&file_name);
+                let pcd_file_last = last_output_dir.join(&file_name);
+
+                match frame {
+                    F::Dual16(frame) => {
+                        let width = frame.firings.len();
+                        let points = frame.into_point_iter().map(map_point_dual);
+                        create_pcd_file_dual(points, pcd_file_strongest, pcd_file_last, width, 16)?;
+                    }
+                    F::Dual32(frame) => {
+                        let width = frame.firings.len();
+                        let points = frame.into_point_iter().map(map_point_dual);
+                        create_pcd_file_dual(points, pcd_file_strongest, pcd_file_last, width, 32)?;
+                    }
+                    _ => unreachable!(),
+                }
+
+                anyhow::Ok(())
+            })?;
+        }
     }
+
     Ok(())
 }
 
-fn save_pcd<P, T>(points: Vec<[T; 3]>, pcd_file: P, data_kind: pcd_rs::DataKind) -> Result<()>
+fn create_pcd_file_single<P, I>(points: I, pcd_file: P, width: usize, height: usize) -> Result<()>
 where
     P: AsRef<Path>,
-    T: ToPrimitive,
+    I: IntoIterator<Item = [f32; 3]>,
 {
     let mut writer = pcd_rs::WriterInit {
-        width: points.len() as u64,
-        height: 1,
+        width: width as u64,
+        height: height as u64,
         viewpoint: Default::default(),
-        data_kind,
+        data_kind: DataKind::Binary,
         schema: None,
     }
     .create(pcd_file)?;
 
-    points.into_iter().try_for_each(|[x, y, z]| -> Result<_> {
-        let point = LibpclPoint {
-            x: x.to_f32().unwrap(),
-            y: y.to_f32().unwrap(),
-            z: z.to_f32().unwrap(),
-            rgb: 0,
-        };
-        writer.push(&point)?;
-        Ok(())
-    })?;
-
+    points
+        .into_iter()
+        .map(|[x, y, z]| LibpclPoint { x, y, z, rgb: 0 })
+        .try_for_each(|point| -> Result<_> {
+            writer.push(&point)?;
+            Ok(())
+        })?;
     writer.finish()?;
+
+    Ok(())
+}
+
+fn create_pcd_file_dual<P1, P2, I>(
+    points: I,
+    pcd_file1: P1,
+    pcd_file2: P2,
+    width: usize,
+    height: usize,
+) -> Result<()>
+where
+    P1: AsRef<Path>,
+    P2: AsRef<Path>,
+    I: IntoIterator<Item = ([f32; 3], [f32; 3])>,
+{
+    let data_kind = DataKind::Binary;
+
+    let mut writer1 = pcd_rs::WriterInit {
+        width: width as u64,
+        height: height as u64,
+        viewpoint: Default::default(),
+        data_kind,
+        schema: None,
+    }
+    .create(pcd_file1)?;
+    let mut writer2 = pcd_rs::WriterInit {
+        width: width as u64,
+        height: height as u64,
+        viewpoint: Default::default(),
+        data_kind,
+        schema: None,
+    }
+    .create(pcd_file2)?;
+
+    let map_point = |[x, y, z]: [f32; 3]| LibpclPoint { x, y, z, rgb: 0 };
+    points
+        .into_iter()
+        .map(|(p1, p2)| (map_point(p1), map_point(p2)))
+        .try_for_each(|(p1, p2)| -> Result<_> {
+            writer1.push(&p1)?;
+            writer2.push(&p2)?;
+            Ok(())
+        })?;
+    writer2.finish()?;
 
     Ok(())
 }

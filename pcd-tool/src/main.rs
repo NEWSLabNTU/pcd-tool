@@ -6,7 +6,7 @@ mod utils;
 
 use anyhow::Result;
 use clap::Parser;
-use opts::{Convert, Info, Opts};
+use opts::{Info, Opts};
 
 fn main() -> Result<()> {
     let opts = Opts::parse();
@@ -15,11 +15,8 @@ fn main() -> Result<()> {
         Opts::Info(Info { file }) => {
             crate::info::info(file)?;
         }
-        Opts::Convert(Convert {
-            input_path,
-            output_path,
-        }) => {
-            crate::convert::convert(input_path, output_path)?;
+        Opts::Convert(args) => {
+            crate::convert::convert(args)?;
         } /* Opts::DeviceTime { file } => {
            *     crate::utils::time(file)?;
            * } */
