@@ -1,0 +1,15 @@
+# rust
+/target
+/Cargo.lock
+
+# editor
+*~
+.*~
+*.swp
+*.swo
+\#*#
+
+# python
+*.pyc
+*.pyo
+__pycache__/
