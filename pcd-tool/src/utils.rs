@@ -1,3 +1,5 @@
+use std::path::Path;
+
 // use crate::types::LidarType;
 // use anyhow::Result;
 // use console::Term;
@@ -5,6 +7,27 @@
 // use iterator_ext::IteratorExt;
 // use lidar_utils::velodyne::{self, FrameConverter as _};
 // use std::{iter, path::Path};
+use crate::types::FileFormat;
+
+pub fn guess_file_format<P>(file: P) -> Option<FileFormat>
+where
+    P: AsRef<Path>,
+{
+    let file = file.as_ref();
+    let file_name = file.file_name()?.to_str()?;
+
+    let format = if file_name.ends_with(".newslab.pcd") {
+        FileFormat::NewslabPcd
+    } else if file_name.ends_with(".pcd") {
+        FileFormat::LibpclPcd
+    } else if file_name.ends_with(".pcap") {
+        FileFormat::VelodynePcap
+    } else {
+        return None;
+    };
+
+    Some(format)
+}
 
 // pub fn time(file: impl AsRef<Path>) -> Result<()> {
 //     let term = Term::stdout();

@@ -3,6 +3,8 @@ use clap::Parser;
 use std::{path::PathBuf, str::FromStr};
 use velodyne_lidar::{ProductID, ReturnMode};
 
+use crate::types::FileFormat;
+
 #[derive(Debug, Clone, Parser)]
 pub enum Opts {
     Info(Info),
@@ -18,11 +20,20 @@ pub struct Info {
 #[derive(Debug, Clone, Parser)]
 pub struct Convert {
     #[clap(short, long)]
+    pub from: Option<FileFormat>,
+
+    #[clap(short, long)]
+    pub to: Option<FileFormat>,
+
+    #[clap(short, long)]
     pub input: PathBuf,
+
     #[clap(short, long)]
     pub output: PathBuf,
+
     #[clap(long)]
     pub velodyne_model: Option<ProductID>,
+
     #[clap(long)]
     pub velodyne_return_mode: Option<VelodyneReturnMode>,
 }

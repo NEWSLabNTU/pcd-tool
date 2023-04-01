@@ -1,6 +1,7 @@
 use crate::{
     opts::{Convert, VelodyneReturnMode},
     types::FileFormat,
+    utils::guess_file_format,
 };
 use anyhow::{anyhow, bail, Result};
 use pcd_format::{LibpclPoint, NewslabV1Point};
@@ -16,29 +17,35 @@ pub fn convert(opts: Convert) -> Result<()> {
     let input_path = &opts.input;
     let output_path = &opts.output;
 
-    let input_format = guess_file_format(input_path).ok_or_else(|| {
-        anyhow!(
-            "cannot guess format of input file '{}'",
-            input_path.display()
-        )
-    })?;
+    let input_format = match opts.from {
+        Some(format) => format,
+        None => guess_file_format(input_path).ok_or_else(|| {
+            anyhow!(
+                "cannot guess format of input '{}'",
+                input_path.display()
+            )
+        })?,
+    };
+    let output_format = match opts.to {
+        Some(format) => format,
+        None => guess_file_format(output_path).ok_or_else(|| {
+            anyhow!(
+                "cannot guess format of output '{}'",
+                input_path.display()
+            )
+        })?,
+    };
 
-    let output_format = guess_file_format(output_path);
+    use FileFormat as F;
 
     match (input_format, output_format) {
-        (FileFormat::LibpclPcd, Some(FileFormat::NewslabPcd)) => {
+        (F::LibpclPcd, F::NewslabPcd) => {
             libpcl_pcd_to_newslab_pcd(input_path, output_path)?;
         }
-        (FileFormat::NewslabPcd, Some(FileFormat::LibpclPcd)) => {
+        (F::NewslabPcd, F::LibpclPcd) => {
             newslab_pcd_to_libpcl_pcd(input_path, output_path)?;
         }
-        (FileFormat::Pcap, _) => {
-            if output_format.is_some() {
-                eprintln!(
-                    "Warning: the output path '{}' is treated as a directory",
-                    output_path.display()
-                );
-            }
+        (F::VelodynePcap, F::LibpclPcd) => {
             let velodyne_model = opts
                 .velodyne_model
                 .ok_or_else(|| anyhow!("--velodyne-mode must be set"))?;
@@ -53,44 +60,18 @@ pub fn convert(opts: Convert) -> Result<()> {
                 velodyne_return_mode,
             )?;
         }
-        (FileFormat::LibpclPcd, None) | (FileFormat::NewslabPcd, None) => {
-            bail!(
-                "You must
-                specify a output file when transforming
-                pcd/newslab-pcd"
-            );
+        (F::VelodynePcap, F::NewslabPcd) => {
+            bail!("converting from pcap.velodyne file to pcd.newslab is not supported");
         }
-
-        (FileFormat::LibpclPcd, Some(FileFormat::LibpclPcd))
-        | (FileFormat::NewslabPcd, Some(FileFormat::NewslabPcd)) => {
+        (F::LibpclPcd | F::NewslabPcd, F::VelodynePcap) => {
+            bail!("converting to pcap.velodyne is not supported");
+        }
+        (F::LibpclPcd, F::LibpclPcd) | (F::NewslabPcd, F::NewslabPcd) | (F::VelodynePcap, F::VelodynePcap) => {
             bail!("Nothing to be done");
-        }
-        (_, Some(FileFormat::Pcap)) => {
-            bail!("converting to pcap file is not supported");
         }
     }
 
     Ok(())
-}
-
-fn guess_file_format<P>(file: P) -> Option<FileFormat>
-where
-    P: AsRef<Path>,
-{
-    let file = file.as_ref();
-    let file_name = file.file_name()?.to_str()?;
-
-    let format = if file_name.ends_with(".newslab.pcd") {
-        FileFormat::NewslabPcd
-    } else if file_name.ends_with(".pcd") {
-        FileFormat::LibpclPcd
-    } else if file_name.ends_with(".pcap") {
-        FileFormat::Pcap
-    } else {
-        return None;
-    };
-
-    Some(format)
 }
 
 fn libpcl_pcd_to_newslab_pcd<PI, PO>(input_path: PI, output_path: PO) -> Result<()>

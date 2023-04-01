@@ -1,6 +1,11 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+use clap::ValueEnum;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
 pub enum FileFormat {
+    #[value(name = "pcd.libpcl")]
     LibpclPcd,
+    #[value(name = "pcd.newslab")]
     NewslabPcd,
-    Pcap,
+    #[value(name = "pcap.velodyne")]
+    VelodynePcap,
 }
