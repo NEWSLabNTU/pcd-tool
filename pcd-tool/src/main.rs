@@ -1,6 +1,8 @@
 mod convert;
+mod dump;
 mod info;
 mod opts;
+mod show;
 mod types;
 mod utils;
 
@@ -17,9 +19,13 @@ fn main() -> Result<()> {
         }
         Opts::Convert(args) => {
             crate::convert::convert(args)?;
-        } /* Opts::DeviceTime { file } => {
-           *     crate::utils::time(file)?;
-           * } */
+        }
+        Opts::Dump(args) => {
+            crate::dump::dump(args)?;
+        }
+        Opts::Show(args) => {
+            crate::show::show(args)?;
+        }
     }
 
     Ok(())

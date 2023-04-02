@@ -1,3 +1,4 @@
+use crate::types::FileFormat;
 use std::path::Path;
 
 // use crate::types::LidarType;
@@ -7,7 +8,6 @@ use std::path::Path;
 // use iterator_ext::IteratorExt;
 // use lidar_utils::velodyne::{self, FrameConverter as _};
 // use std::{iter, path::Path};
-use crate::types::FileFormat;
 
 pub fn guess_file_format<P>(file: P) -> Option<FileFormat>
 where

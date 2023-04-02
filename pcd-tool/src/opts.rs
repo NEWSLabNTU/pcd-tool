@@ -8,7 +8,26 @@ use crate::types::FileFormat;
 #[derive(Debug, Clone, Parser)]
 pub enum Opts {
     Info(Info),
+    Dump(Dump),
+    Show(Show),
     Convert(Convert),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Dump {
+    #[clap(short, long)]
+    pub format: Option<FileFormat>,
+
+    pub input: PathBuf,
+}
+
+/// Show the point cloud data.
+#[derive(Debug, Clone, Parser)]
+pub struct Show {
+    #[clap(short, long)]
+    pub format: Option<FileFormat>,
+
+    pub input: PathBuf,
 }
 
 #[derive(Debug, Clone, Parser)]

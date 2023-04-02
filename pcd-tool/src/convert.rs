@@ -19,21 +19,13 @@ pub fn convert(opts: Convert) -> Result<()> {
 
     let input_format = match opts.from {
         Some(format) => format,
-        None => guess_file_format(input_path).ok_or_else(|| {
-            anyhow!(
-                "cannot guess format of input '{}'",
-                input_path.display()
-            )
-        })?,
+        None => guess_file_format(input_path)
+            .ok_or_else(|| anyhow!("cannot guess format of input '{}'", input_path.display()))?,
     };
     let output_format = match opts.to {
         Some(format) => format,
-        None => guess_file_format(output_path).ok_or_else(|| {
-            anyhow!(
-                "cannot guess format of output '{}'",
-                input_path.display()
-            )
-        })?,
+        None => guess_file_format(output_path)
+            .ok_or_else(|| anyhow!("cannot guess format of output '{}'", output_path.display()))?,
     };
 
     use FileFormat as F;
@@ -66,7 +58,9 @@ pub fn convert(opts: Convert) -> Result<()> {
         (F::LibpclPcd | F::NewslabPcd, F::VelodynePcap) => {
             bail!("converting to pcap.velodyne is not supported");
         }
-        (F::LibpclPcd, F::LibpclPcd) | (F::NewslabPcd, F::NewslabPcd) | (F::VelodynePcap, F::VelodynePcap) => {
+        (F::LibpclPcd, F::LibpclPcd)
+        | (F::NewslabPcd, F::NewslabPcd)
+        | (F::VelodynePcap, F::VelodynePcap) => {
             bail!("Nothing to be done");
         }
     }
