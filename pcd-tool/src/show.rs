@@ -1,29 +1,26 @@
-use crate::{opts::Show, types::FileFormat, utils::guess_file_format};
+mod gui;
+
+use self::gui::run_gui;
+use crate::{
+    opts::{Show, VelodyneReturnMode},
+    show::gui::PointAndColor,
+    types::FileFormat,
+    utils::{build_velodyne_config, guess_file_format},
+};
 use anyhow::{anyhow, Result};
 use itertools::Itertools;
-use kiss3d::{
-    light::Light,
-    nalgebra as na,
-    window::{State, Window},
-};
+use measurements::Length;
 use std::path::Path;
+use velodyne_lidar::ProductID;
 
-struct Gui {
-    points: Vec<na::Point3<f32>>,
-}
-
-impl State for Gui {
-    fn step(&mut self, window: &mut Window) {
-        let color = na::Point3::new(1.0, 1.0, 1.0);
-
-        self.points
-            .iter()
-            .for_each(|point| window.draw_point(point, &color));
-    }
-}
 
 pub fn show(args: Show) -> Result<()> {
-    let Show { format, input } = args;
+    let Show {
+        format,
+        input,
+        velodyne_model,
+        velodyne_return_mode,
+    } = args;
 
     let format = match format {
         Some(format) => format,
@@ -34,17 +31,75 @@ pub fn show(args: Show) -> Result<()> {
     use FileFormat as F;
     match format {
         F::LibpclPcd | F::NewslabPcd => show_pcd(&input)?,
-        F::VelodynePcap => show_velodyne_pcap(&input)?,
+        F::VelodynePcap => {
+            let velodyne_model =
+                velodyne_model.ok_or_else(|| anyhow!("--velodyne-mode must be set"))?;
+            let velodyne_return_mode = velodyne_return_mode
+                .ok_or_else(|| anyhow!("--velodyne-return-mode must be set"))?;
+
+            show_velodyne_pcap(&input, velodyne_model, velodyne_return_mode)?;
+        }
     }
 
     Ok(())
 }
 
-fn show_velodyne_pcap<P>(path: P) -> Result<()>
+fn show_velodyne_pcap<P>(path: P, model: ProductID, mode: VelodyneReturnMode) -> Result<()>
 where
     P: AsRef<Path>,
 {
-    todo!()
+    let config = build_velodyne_config(model, mode.0)?;
+    let frames = velodyne_lidar::iter::frame_xyz_iter_from_file(config, path)?;
+
+    let frames: Vec<_> = frames
+        .map(|frame| -> Result<_> {
+            let frame = frame?;
+
+            let points: Vec<_> = frame
+                .into_firing_iter()
+                .flat_map(|firing| {
+                    firing.into_point_iter().flat_map(|point| {
+                        use velodyne_lidar::types::point::Point as P;
+
+                        let length_to_f32 = |[x, y, z]: [Length; 3]| {
+                            [
+                                x.as_meters() as f32,
+                                y.as_meters() as f32,
+                                z.as_meters() as f32,
+                            ]
+                        };
+
+                        match point {
+                            P::Single(point) => {
+                                vec![PointAndColor {
+                                    point: length_to_f32(point.measurement.xyz),
+                                    color: [1.0, 1.0, 1.0],
+                                }]
+                            }
+                            P::Dual(point) => {
+                                vec![
+                                    PointAndColor {
+                                        point: length_to_f32(point.measurements.strongest.xyz),
+                                        color: [0.0, 1.0, 0.0],
+                                    },
+                                    PointAndColor {
+                                        point: length_to_f32(point.measurements.last.xyz),
+                                        color: [0.0, 0.0, 1.0],
+                                    },
+                                ]
+                            }
+                        }
+                    })
+                })
+                .collect();
+
+            Ok(points)
+        })
+        .try_collect()?;
+
+    run_gui(frames.into_iter());
+
+    Ok(())
 }
 
 fn show_pcd<P>(path: P) -> Result<()>
@@ -55,19 +110,15 @@ where
     let points: Vec<_> = reader
         .map(|record| -> Result<_> {
             let record = record?;
-            let [x, y, z] = record
+            let point = record
                 .to_xyz()
                 .ok_or_else(|| anyhow!("No x, y or z field found"))?;
-            let point = na::Point3::new(x, y, z);
-            Ok(point)
+            let color = [1.0, 1.0, 1.0];
+            Ok(gui::PointAndColor { point, color })
         })
         .try_collect()?;
 
-    let mut window = Window::new("pcd-tool");
-    window.set_light(Light::StickToCamera);
-
-    let gui = Gui { points };
-    window.render_loop(gui);
+    run_gui([points].into_iter());
 
     Ok(())
 }

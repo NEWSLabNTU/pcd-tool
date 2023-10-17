@@ -24,7 +24,7 @@ pub struct Dump {
     pub input: PathBuf,
 }
 
-/// Show the overview of a point cloud file.
+/// Show the point cloud data in a graphics user interface.
 #[derive(Debug, Clone, Parser)]
 pub struct Show {
     /// The input file format.
@@ -33,6 +33,14 @@ pub struct Show {
 
     /// The input file path.
     pub input: PathBuf,
+
+    /// The Velodyne LiDAR model name.
+    #[clap(long)]
+    pub velodyne_model: Option<ProductID>,
+
+    /// The return mode configured on the Velodyne LiDAR.
+    #[clap(long)]
+    pub velodyne_return_mode: Option<VelodyneReturnMode>,
 }
 
 /// Show the information of a point cloud file.
