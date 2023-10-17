@@ -13,7 +13,6 @@ use measurements::Length;
 use std::path::Path;
 use velodyne_lidar::ProductID;
 
-
 pub fn show(args: Show) -> Result<()> {
     let Show {
         format,

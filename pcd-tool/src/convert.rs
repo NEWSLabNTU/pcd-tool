@@ -17,9 +17,11 @@ use std::{
 };
 use velodyne_lidar::{
     iter::frame_xyz_iter_from_file,
-    types::format::FormatKind,
-    types::measurements::{Measurement, MeasurementDual},
-    types::point::{PointD, PointS},
+    types::{
+        format::FormatKind,
+        measurements::{Measurement, MeasurementDual},
+        point::{PointD, PointS},
+    },
     ProductID, ReturnMode,
 };
 
