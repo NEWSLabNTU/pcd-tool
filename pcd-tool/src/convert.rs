@@ -1,7 +1,7 @@
 use crate::{
     opts::{Convert, VelodyneReturnMode},
     types::FileFormat,
-    utils::guess_file_format,
+    utils::{build_velodyne_config, guess_file_format},
 };
 use anyhow::{anyhow, bail, Result};
 use approx::abs_diff_eq;
@@ -221,10 +221,7 @@ where
     I: AsRef<Path>,
     O: AsRef<Path>,
 {
-    use velodyne_lidar::config::Config;
-
     use FormatKind as F;
-    use ProductID as P;
     use ReturnMode as R;
 
     // closures
@@ -249,25 +246,7 @@ where
     };
 
     // create the velodyne-lidar config
-    let config = match (model, mode.0) {
-        (P::VLP16, R::Last) => Config::new_vlp_16_last(),
-        (P::VLP16, R::Strongest) => Config::new_vlp_16_strongest(),
-        (P::VLP16, R::Dual) => Config::new_vlp_16_dual(),
-
-        (P::PuckHiRes, R::Last) => Config::new_puck_hires_last(),
-        (P::PuckHiRes, R::Strongest) => Config::new_puck_hires_strongest(),
-        (P::PuckHiRes, R::Dual) => Config::new_puck_hires_dual(),
-
-        (P::PuckLite, R::Last) => Config::new_puck_lite_last(),
-        (P::PuckLite, R::Strongest) => Config::new_puck_lite_strongest(),
-        (P::PuckLite, R::Dual) => Config::new_puck_lite_dual(),
-
-        (P::VLP32C, R::Last) => Config::new_vlp_32c_last(),
-        (P::VLP32C, R::Strongest) => Config::new_vlp_32c_strongest(),
-        (P::VLP32C, R::Dual) => Config::new_vlp_32c_dual(),
-
-        _ => bail!("The model '{}' is not supported", model),
-    };
+    let config = build_velodyne_config(model, mode.0)?;
 
     // Create output directories
     let output_dir = output_dir.as_ref();

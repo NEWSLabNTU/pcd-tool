@@ -1,5 +1,8 @@
 use crate::types::FileFormat;
+use anyhow::bail;
+use anyhow::Result;
 use std::path::Path;
+use velodyne_lidar::{ProductID, ReturnMode};
 
 // use crate::types::LidarType;
 // use anyhow::Result;
@@ -87,3 +90,32 @@ where
 //     })?;
 //     Ok(())
 // }
+
+pub fn build_velodyne_config(model: ProductID, mode: ReturnMode) -> Result<velodyne_lidar::Config> {
+    use velodyne_lidar::Config;
+
+    use ProductID as P;
+    use ReturnMode as R;
+
+    let config = match (model, mode) {
+        (P::VLP16, R::Last) => Config::new_vlp_16_last(),
+        (P::VLP16, R::Strongest) => Config::new_vlp_16_strongest(),
+        (P::VLP16, R::Dual) => Config::new_vlp_16_dual(),
+
+        (P::PuckHiRes, R::Last) => Config::new_puck_hires_last(),
+        (P::PuckHiRes, R::Strongest) => Config::new_puck_hires_strongest(),
+        (P::PuckHiRes, R::Dual) => Config::new_puck_hires_dual(),
+
+        (P::PuckLite, R::Last) => Config::new_puck_lite_last(),
+        (P::PuckLite, R::Strongest) => Config::new_puck_lite_strongest(),
+        (P::PuckLite, R::Dual) => Config::new_puck_lite_dual(),
+
+        (P::VLP32C, R::Last) => Config::new_vlp_32c_last(),
+        (P::VLP32C, R::Strongest) => Config::new_vlp_32c_strongest(),
+        (P::VLP32C, R::Dual) => Config::new_vlp_32c_dual(),
+
+        _ => bail!("The model '{}' is not supported", model),
+    };
+
+    Ok(config)
+}
