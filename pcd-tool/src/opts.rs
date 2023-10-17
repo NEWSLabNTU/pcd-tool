@@ -4,7 +4,7 @@ use clap::Parser;
 use std::{path::PathBuf, str::FromStr};
 use velodyne_lidar::{ProductID, ReturnMode};
 
-/// The swiss knife for point cloud data.
+/// The Swiss army knife for point cloud data.
 #[derive(Debug, Clone, Parser)]
 pub enum Opts {
     Info(Info),

@@ -4,9 +4,17 @@ use crate::{
     utils::guess_file_format,
 };
 use anyhow::{anyhow, bail, Result};
+use approx::abs_diff_eq;
 use pcd_format::{LibpclPoint, NewslabV1Point};
 use pcd_rs::DataKind;
-use std::{f64, fs, path::Path};
+use std::{
+    f64::{
+        self,
+        consts::{FRAC_PI_2, PI},
+    },
+    fs,
+    path::Path,
+};
 use velodyne_lidar::{
     kinds::FormatKind,
     point::{Measurement, MeasurementDual, PointD, PointS},
@@ -61,7 +69,8 @@ pub fn convert(opts: Convert) -> Result<()> {
         (F::LibpclPcd, F::LibpclPcd)
         | (F::NewslabPcd, F::NewslabPcd)
         | (F::VelodynePcap, F::VelodynePcap) => {
-            bail!("Nothing to be done");
+            // Simply copy the file
+            fs::copy(input_path, output_path)?;
         }
     }
 
@@ -97,20 +106,59 @@ where
         let y = y as f64;
         let z = z as f64;
         let distance = (x.powi(2) + y.powi(2) + z.powi(2)).sqrt();
-        let azimuthal_angle = y.atan2(x);
-        let polar_angle = (x.powi(2) + y.powi(2) / z).atan();
-        let vertical_angle = f64::consts::FRAC_PI_2 - polar_angle;
 
-        let point = NewslabV1Point {
-            x,
-            y,
-            z,
-            distance,
-            azimuthal_angle,
-            vertical_angle,
-            intensity: 0.0,
-            laser_id: 0,
-            timestamp_ns: 0,
+        let point = if abs_diff_eq!(distance, 0.0) {
+            NewslabV1Point {
+                x,
+                y,
+                z,
+                distance,
+                azimuthal_angle: 0.0,
+                vertical_angle: 0.0,
+                intensity: 0.0,
+                laser_id: 0,
+                timestamp_ns: 0,
+            }
+        } else {
+            let polar_angle = if abs_diff_eq!(z, 0.0) {
+                FRAC_PI_2
+            } else {
+                let planar_dist = (x.powi(2) + y.powi(2)).sqrt();
+                planar_dist.atan2(z) + if z > 0.0 { 0.0 } else { PI }
+            };
+            let azimuthal_angle = match (abs_diff_eq!(x, 0.0), abs_diff_eq!(y, 0.0)) {
+                (true, true) => 0.0,
+                (true, false) => {
+                    if y > 0.0 {
+                        FRAC_PI_2
+                    } else {
+                        -FRAC_PI_2
+                    }
+                }
+                (false, _) => {
+                    y.atan2(x)
+                        + if x > 0.0 {
+                            0.0
+                        } else if y >= 0.0 {
+                            PI
+                        } else {
+                            -PI
+                        }
+                }
+            };
+            let vertical_angle = FRAC_PI_2 - polar_angle;
+
+            NewslabV1Point {
+                x,
+                y,
+                z,
+                distance,
+                azimuthal_angle,
+                vertical_angle,
+                intensity: 0.0,
+                laser_id: 0,
+                timestamp_ns: 0,
+            }
         };
 
         writer.push(&point)?;
