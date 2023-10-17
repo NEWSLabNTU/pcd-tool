@@ -16,8 +16,10 @@ use std::{
     path::Path,
 };
 use velodyne_lidar::{
-    kinds::FormatKind,
-    point::{Measurement, MeasurementDual, PointD, PointS},
+    iter::frame_xyz_iter_from_file,
+    types::format::FormatKind,
+    types::measurements::{Measurement, MeasurementDual},
+    types::point::{PointD, PointS},
     ProductID, ReturnMode,
 };
 
@@ -219,10 +221,7 @@ where
     I: AsRef<Path>,
     O: AsRef<Path>,
 {
-    use velodyne_lidar::{
-        config::Config,
-        iter::{convert::packet_to_frame_xyz, packet::from_file},
-    };
+    use velodyne_lidar::config::Config;
 
     use FormatKind as F;
     use ProductID as P;
@@ -289,17 +288,7 @@ where
         }
     }
 
-    let packets = from_file(input_file)?.filter_map(|packet| {
-        let packet = match packet {
-            Ok(packet) => packet,
-            Err(err) => {
-                eprintln!("{err:?}");
-                return None;
-            }
-        };
-        packet.try_into_data().ok()
-    });
-    let frames = packet_to_frame_xyz(config, packets)?;
+    let frames = frame_xyz_iter_from_file(config, input_file)?;
 
     match mode.0 {
         R::Strongest => {
@@ -307,7 +296,7 @@ where
                 let file_name = format!("{:06}.pcd", index);
                 let pcd_file = strongest_output_dir.join(file_name);
 
-                match frame {
+                match frame? {
                     F::Single16(frame) => {
                         let width = frame.firings.len();
                         let points = frame.into_point_iter().map(map_point_single);
@@ -329,7 +318,7 @@ where
                 let file_name = format!("{:06}.pcd", index);
                 let pcd_file = last_output_dir.join(file_name);
 
-                match frame {
+                match frame? {
                     F::Single16(frame) => {
                         let width = frame.firings.len();
                         let points = frame.into_point_iter().map(map_point_single);
@@ -352,7 +341,7 @@ where
                 let pcd_file_strongest = strongest_output_dir.join(&file_name);
                 let pcd_file_last = last_output_dir.join(&file_name);
 
-                match frame {
+                match frame? {
                     F::Dual16(frame) => {
                         let width = frame.firings.len();
                         let points = frame.into_point_iter().map(map_point_dual);
