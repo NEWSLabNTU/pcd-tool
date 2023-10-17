@@ -1,10 +1,10 @@
+use crate::types::FileFormat;
 use anyhow::bail;
 use clap::Parser;
 use std::{path::PathBuf, str::FromStr};
 use velodyne_lidar::{ProductID, ReturnMode};
 
-use crate::types::FileFormat;
-
+/// The swiss knife for point cloud data.
 #[derive(Debug, Clone, Parser)]
 pub enum Opts {
     Info(Info),
@@ -13,46 +13,59 @@ pub enum Opts {
     Convert(Convert),
 }
 
+/// Dump the content of the point cloud file.
 #[derive(Debug, Clone, Parser)]
 pub struct Dump {
+    /// The input file format.
     #[clap(short, long)]
     pub format: Option<FileFormat>,
 
+    /// The input file path.
     pub input: PathBuf,
 }
 
-/// Show the point cloud data.
+/// Show the overview of a point cloud file.
 #[derive(Debug, Clone, Parser)]
 pub struct Show {
+    /// The input file format.
     #[clap(short, long)]
     pub format: Option<FileFormat>,
 
+    /// The input file path.
     pub input: PathBuf,
 }
 
+/// Show the information of a point cloud file.
 #[derive(Debug, Clone, Parser)]
 pub struct Info {
+    /// The file to be inspected.
     pub file: PathBuf,
 }
 
-/// Point cloud file conversion.
+/// Convert point cloud file format.
 #[derive(Debug, Clone, Parser)]
 pub struct Convert {
+    /// The input file format.
     #[clap(short, long)]
     pub from: Option<FileFormat>,
 
+    /// The output file format.
     #[clap(short, long)]
     pub to: Option<FileFormat>,
 
+    /// The input file path.
     #[clap(short, long)]
     pub input: PathBuf,
 
+    /// The output file path.
     #[clap(short, long)]
     pub output: PathBuf,
 
+    /// The Velodyne LiDAR model name.
     #[clap(long)]
     pub velodyne_model: Option<ProductID>,
 
+    /// The return mode configured on the Velodyne LiDAR.
     #[clap(long)]
     pub velodyne_return_mode: Option<VelodyneReturnMode>,
 }
