@@ -22,7 +22,7 @@ pcd-tool info input.pcd
 
 ### Convert a Velodyne .pcap to a directory of .pcd files
 
-```rust
+```sh
 cargo run --release -- convert \
     -i input.pcap \
     -o output/ \
@@ -34,7 +34,7 @@ cargo run --release -- convert \
 
 ### Visualize a Velodyne .pcap file
 
-```rust
+```sh
 cargo run --release -- show \
     --velodyne-model VLP32C \
     --velodyne-return-mode strongest \
@@ -44,14 +44,14 @@ cargo run --release -- show \
 
 ### Visualize a .pcd file
 
-```rust
+```sh
 cargo run --release -- show input.pcd
 ```
 
 
 ### Dump the content of a Velodyne .pcap file
 
-```rust
+```sh
 cargo run --release -- dump \
     --velodyne-model VLP32C \
     --velodyne-return-mode strongest \
@@ -61,7 +61,7 @@ cargo run --release -- dump \
 
 ### Visualize the content of a .pcd file
 
-```rust
+```sh
 cargo run --release -- dump input.pcd
 ```
 
