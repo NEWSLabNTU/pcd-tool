@@ -22,6 +22,14 @@ pub struct Dump {
 
     /// The input file path.
     pub input: PathBuf,
+
+    /// The Velodyne LiDAR model name.
+    #[clap(long)]
+    pub velodyne_model: Option<ProductID>,
+
+    /// The return mode configured on the Velodyne LiDAR.
+    #[clap(long)]
+    pub velodyne_return_mode: Option<VelodyneReturnMode>,
 }
 
 /// Show the point cloud data in a graphics user interface.
