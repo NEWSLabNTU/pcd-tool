@@ -13,23 +13,56 @@ cargo install -f --git https://github.com/NEWSLabNTU/pcd-tool.git
 
 ## Usage
 
-Show the schema and statistics.
+### Show the schema and statistics of a .pcd file
 
 ```sh
 pcd-tool info input.pcd
 ```
 
 
-Show the data in terminal.
+### Convert a Velodyne .pcap to a directory of .pcd files
 
-```sh
-pcd-tool dump input.pcd
+```rust
+cargo run --release -- convert \
+    -i input.pcap \
+    -o output/ \
+    -t pcd.libpcl \
+    --velodyne-model VLP32C \
+    --velodyne-return-mode strongest
 ```
 
-Convert from a Velodyne .pcap file to PCD files.
 
-```sh
-pcd-tool convert input.pcap output_dir/
+### Visualize a Velodyne .pcap file
+
+```rust
+cargo run --release -- show \
+    --velodyne-model VLP32C \
+    --velodyne-return-mode strongest \
+    input.pcap
+```
+
+
+### Visualize a .pcd file
+
+```rust
+cargo run --release -- show input.pcd
+```
+
+
+### Dump the content of a Velodyne .pcap file
+
+```rust
+cargo run --release -- dump \
+    --velodyne-model VLP32C \
+    --velodyne-return-mode strongest \
+    input.pcap
+```
+
+
+### Visualize the content of a .pcd file
+
+```rust
+cargo run --release -- dump input.pcd
 ```
 
 ## License
