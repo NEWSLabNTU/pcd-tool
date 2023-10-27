@@ -84,6 +84,24 @@ pub struct Convert {
     /// The return mode configured on the Velodyne LiDAR.
     #[clap(long)]
     pub velodyne_return_mode: Option<VelodyneReturnMode>,
+
+    /// The first frame number to start to convert.
+    ///
+    /// If positive number is provided, it's frame number starting
+    /// from 1. If negative number is provided, it's the number
+    /// counted from the last frame.
+    #[clap(long, default_value = "1", value_parser = parse_start_frame)]
+    pub start: StartFrame,
+
+    /// The last frame number or the number of frames to be converted.
+    ///
+    /// If the number is prefixed with a '+', the value is treated as
+    /// the frame count. if a positive number without '+' prefix is
+    /// provided, it's frame number starting from 1. If negative
+    /// number is provided, it's the number counted from the last
+    /// frame.
+    #[clap(long, default_value = "-1", value_parser = parse_end_or_count)]
+    pub end: EndFrame,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -102,4 +120,87 @@ impl FromStr for VelodyneReturnMode {
 
         Ok(Self(mode))
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StartFrame {
+    Forward(usize),
+    Backward(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EndFrame {
+    Forward(usize),
+    Backward(usize),
+    Count(usize),
+}
+
+fn parse_end_or_count(arg: &str) -> Result<EndFrame, String> {
+    macro_rules! bail {
+        () => {
+            return Err(format!("invalid end-or-count '{arg}'"));
+        };
+    }
+
+    let arg = if let Some(value) = arg.strip_prefix('+') {
+        let Ok(count) = value.parse::<usize>() else {
+            bail!();
+        };
+
+        EndFrame::Count(count)
+    } else if let Some(value) = arg.strip_prefix('-') {
+        let Ok(value) = value.parse::<usize>() else {
+            bail!();
+        };
+
+        if value == 0 {
+            return Err("The value provided to --end must be non-zero.".to_string());
+        }
+
+        EndFrame::Backward(value)
+    } else {
+        let Ok(value) = arg.parse::<usize>() else {
+            bail!();
+        };
+
+        if value == 0 {
+            return Err("The value provided to --end must be non-zero.".to_string());
+        }
+
+        EndFrame::Forward(value)
+    };
+
+    Ok(arg)
+}
+
+fn parse_start_frame(arg: &str) -> Result<StartFrame, String> {
+    macro_rules! bail {
+        () => {
+            return Err(format!("invalid end-or-count '{arg}'"));
+        };
+    }
+
+    let arg = if let Some(value) = arg.strip_prefix('-') {
+        let Ok(value) = value.parse::<usize>() else {
+            bail!();
+        };
+
+        if value == 0 {
+            return Err("The value provided to --end must be non-zero.".to_string());
+        }
+
+        StartFrame::Backward(value)
+    } else {
+        let Ok(value) = arg.parse::<usize>() else {
+            bail!();
+        };
+
+        if value == 0 {
+            return Err("The value provided to --end must be non-zero.".to_string());
+        }
+
+        StartFrame::Forward(value)
+    };
+
+    Ok(arg)
 }

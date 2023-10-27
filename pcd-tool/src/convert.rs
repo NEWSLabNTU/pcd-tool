@@ -1,9 +1,9 @@
 use crate::{
-    opts::{Convert, VelodyneReturnMode},
+    opts::{Convert, EndFrame, StartFrame, VelodyneReturnMode},
     types::FileFormat,
     utils::{build_velodyne_config, guess_file_format},
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use approx::abs_diff_eq;
 use pcd_format::{LibpclPoint, NewslabV1Point};
 use pcd_rs::DataKind;
@@ -62,6 +62,8 @@ pub fn convert(opts: Convert) -> Result<()> {
                 output_path,
                 velodyne_model,
                 velodyne_return_mode,
+                opts.start,
+                opts.end,
             )?;
         }
         (F::VelodynePcap, F::NewslabPcd) => {
@@ -73,6 +75,13 @@ pub fn convert(opts: Convert) -> Result<()> {
         (F::LibpclPcd, F::LibpclPcd)
         | (F::NewslabPcd, F::NewslabPcd)
         | (F::VelodynePcap, F::VelodynePcap) => {
+            match (opts.start, opts.end) {
+                (StartFrame::Forward(1), EndFrame::Backward(1)) => {}
+                _ => {
+                    bail!("--start and --end are not supported ");
+                }
+            }
+
             // Simply copy the file
             fs::copy(input_path, output_path)?;
         }
@@ -218,6 +227,8 @@ fn velodyne_pcap_to_libpcl_pcd<I, O>(
     output_dir: O,
     model: ProductID,
     mode: VelodyneReturnMode,
+    start: StartFrame,
+    end: EndFrame,
 ) -> Result<()>
 where
     I: AsRef<Path>,
@@ -225,6 +236,38 @@ where
 {
     use FormatKind as F;
     use ReturnMode as R;
+
+    let num_frames = count_frames_in_velodyne_pcap(input_file.as_ref(), model, mode)?;
+
+    let start = match start {
+        StartFrame::Forward(count) => count - 1,
+        StartFrame::Backward(count) => {
+            let Some(end) = num_frames.checked_sub(count) else {
+                bail!("--start position is out of bound");
+            };
+            end
+        }
+    };
+    let end = match end {
+        EndFrame::Forward(count) => {
+            ensure!(count <= num_frames, "--end position is out of bound");
+            count
+        }
+        EndFrame::Backward(count) => {
+            let Some(end) = (num_frames + 1).checked_sub(count) else {
+                bail!("--end position is out of bound");
+            };
+            end
+        }
+        EndFrame::Count(count) => {
+            let end = start + count;
+            ensure!(count <= num_frames, "--end position is out of bound");
+            end
+        }
+    };
+    let Some(count) = end.checked_sub(start) else {
+        bail!("--start position must go before --end position");
+    };
 
     // closures
     let map_measurement = |measurement: Measurement| {
@@ -269,11 +312,14 @@ where
         }
     }
 
-    let frames = frame_xyz_iter_from_file(config, input_file)?;
+    let mut frames = frame_xyz_iter_from_file(config, input_file)?
+        .enumerate()
+        .skip(start)
+        .take(count);
 
     match mode.0 {
         R::Strongest => {
-            frames.enumerate().try_for_each(|(index, frame)| {
+            frames.try_for_each(|(index, frame)| {
                 let file_name = format!("{:06}.pcd", index);
                 let pcd_file = strongest_output_dir.join(file_name);
 
@@ -295,7 +341,7 @@ where
             })?;
         }
         R::Last => {
-            frames.enumerate().try_for_each(|(index, frame)| {
+            frames.try_for_each(|(index, frame)| {
                 let file_name = format!("{:06}.pcd", index);
                 let pcd_file = last_output_dir.join(file_name);
 
@@ -317,7 +363,7 @@ where
             })?;
         }
         R::Dual => {
-            frames.enumerate().try_for_each(|(index, frame)| {
+            frames.try_for_each(|(index, frame)| {
                 let file_name = format!("{:06}.pcd", index);
                 let pcd_file_strongest = strongest_output_dir.join(&file_name);
                 let pcd_file_last = last_output_dir.join(&file_name);
@@ -413,4 +459,17 @@ where
     writer2.finish()?;
 
     Ok(())
+}
+
+fn count_frames_in_velodyne_pcap<P>(
+    path: P,
+    model: ProductID,
+    mode: VelodyneReturnMode,
+) -> Result<usize>
+where
+    P: AsRef<Path>,
+{
+    let config = build_velodyne_config(model, mode.0)?;
+    let count = frame_xyz_iter_from_file(config, path)?.count();
+    Ok(count)
 }
