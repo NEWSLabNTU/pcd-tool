@@ -1,12 +1,16 @@
 use crate::{
+    io::{
+        count_frames_in_velodyne_pcap, create_libpcl_pcd_reader, create_pcd_file_dual,
+        create_pcd_file_single, load_bin, RawBinWriter,
+    },
     opts::{Convert, EndFrame, StartFrame, VelodyneReturnMode},
-    types::FileFormat,
+    types::{BinPoint, FileFormat},
     utils::{build_velodyne_config, guess_file_format},
 };
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use approx::abs_diff_eq;
 use pcd_format::{LibpclPoint, NewslabV1Point};
-use pcd_rs::DataKind;
+use rayon::prelude::*;
 use std::{
     f64::{
         self,
@@ -72,9 +76,34 @@ pub fn convert(opts: Convert) -> Result<()> {
         (F::LibpclPcd | F::NewslabPcd, F::VelodynePcap) => {
             bail!("converting to pcap.velodyne is not supported");
         }
+        (F::LibpclPcd, F::RawBin) => {
+            let path = input_path.canonicalize()?;
+            let input_is_file = path.is_file();
+
+            if input_is_file {
+                libpcl_pcd_file_raw_bin_file(input_path, output_path)?;
+            } else {
+                libpcl_pcd_dir_raw_bin_dir(input_path, output_path)?;
+            }
+        }
+        (F::NewslabPcd, F::RawBin) => todo!(),
+        (F::VelodynePcap, F::RawBin) => todo!(),
+        (F::RawBin, F::LibpclPcd) => {
+            let path = input_path.canonicalize()?;
+            let input_is_file = path.is_file();
+
+            if input_is_file {
+                bin_file_to_libpcl_pcd_file(input_path, output_path)?;
+            } else {
+                bin_dir_to_libpcl_dir(input_path, output_path)?;
+            }
+        }
+        (F::RawBin, F::NewslabPcd) => todo!(),
+        (F::RawBin, F::VelodynePcap) => todo!(),
         (F::LibpclPcd, F::LibpclPcd)
         | (F::NewslabPcd, F::NewslabPcd)
-        | (F::VelodynePcap, F::VelodynePcap) => {
+        | (F::VelodynePcap, F::VelodynePcap)
+        | (F::RawBin, F::RawBin) => {
             match (opts.start, opts.end) {
                 (StartFrame::Forward(1), EndFrame::Backward(1)) => {}
                 _ => {
@@ -95,7 +124,8 @@ where
     PI: AsRef<Path>,
     PO: AsRef<Path>,
 {
-    let mut reader = pcd_rs::Reader::open(input_path)?;
+    // let mut reader = pcd_rs::Reader::open(input_path)?;
+    let mut reader = create_libpcl_pcd_reader(input_path)?;
     let pcd_rs::PcdMeta {
         width,
         height,
@@ -390,86 +420,215 @@ where
     Ok(())
 }
 
-fn create_pcd_file_single<P, I>(points: I, pcd_file: P, width: usize, height: usize) -> Result<()>
+fn libpcl_pcd_file_raw_bin_file<I, O>(input_file: I, output_file: O) -> Result<()>
 where
-    P: AsRef<Path>,
-    I: IntoIterator<Item = [f32; 3]>,
+    I: AsRef<Path>,
+    O: AsRef<Path>,
 {
-    let mut writer = pcd_rs::WriterInit {
-        width: width as u64,
-        height: height as u64,
-        viewpoint: Default::default(),
-        data_kind: DataKind::Binary,
-        schema: None,
-    }
-    .create(pcd_file)?;
+    let reader = create_libpcl_pcd_reader(input_file)?;
+    let mut writer = RawBinWriter::from_path(output_file)?;
 
-    points
-        .into_iter()
-        .map(|[x, y, z]| LibpclPoint { x, y, z, rgb: 0 })
-        .try_for_each(|point| -> Result<_> {
-            writer.push(&point)?;
-            Ok(())
-        })?;
+    for point in reader {
+        let LibpclPoint { x, y, z, rgb: _ } = point?;
+        writer.push([x, y, z, 0.0])?;
+    }
     writer.finish()?;
 
     Ok(())
 }
 
-fn create_pcd_file_dual<P1, P2, I>(
-    points: I,
-    pcd_file1: P1,
-    pcd_file2: P2,
-    width: usize,
-    height: usize,
-) -> Result<()>
+fn libpcl_pcd_dir_raw_bin_dir<I, O>(input_dir: I, output_dir: O) -> Result<()>
 where
-    P1: AsRef<Path>,
-    P2: AsRef<Path>,
-    I: IntoIterator<Item = ([f32; 3], [f32; 3])>,
+    I: AsRef<Path>,
+    O: AsRef<Path>,
 {
-    let data_kind = DataKind::Binary;
+    let output_dir = output_dir.as_ref();
+    fs::create_dir(output_dir)
+        .with_context(|| format!("unable to create directory {}", output_dir.display()))?;
 
-    let mut writer1 = pcd_rs::WriterInit {
-        width: width as u64,
-        height: height as u64,
-        viewpoint: Default::default(),
-        data_kind,
-        schema: None,
-    }
-    .create(pcd_file1)?;
-    let mut writer2 = pcd_rs::WriterInit {
-        width: width as u64,
-        height: height as u64,
-        viewpoint: Default::default(),
-        data_kind,
-        schema: None,
-    }
-    .create(pcd_file2)?;
+    let input_paths: Vec<_> = input_dir
+        .as_ref()
+        .read_dir()?
+        .filter_map(|entry| {
+            macro_rules! skip {
+                () => {
+                    {
+                        return None;
+                    }
+                };
+                ($($tokens:tt)*) => {
+                    {
+                        eprintln!("Error: {}", format_args!($($tokens)*));
+                        return None
+                    }
+                };
+            }
 
-    let map_point = |[x, y, z]: [f32; 3]| LibpclPoint { x, y, z, rgb: 0 };
-    points
-        .into_iter()
-        .map(|(p1, p2)| (map_point(p1), map_point(p2)))
-        .try_for_each(|(p1, p2)| -> Result<_> {
-            writer1.push(&p1)?;
-            writer2.push(&p2)?;
-            Ok(())
-        })?;
-    writer2.finish()?;
+            let path = match entry {
+                Ok(entry) => entry.path(),
+                Err(err) => skip!("{err}"),
+            };
 
+            match path.extension() {
+                Some(ext) => {
+                    if ext != "bin" {
+                        skip!();
+                    }
+                }
+                None => skip!(),
+            }
+
+            match path.canonicalize() {
+                Ok(path) => {
+                    if !path.is_file() {
+                        skip!();
+                    }
+                }
+                Err(err) => skip!("Unable to read {}: {err}", path.display()),
+            };
+
+            Some(path)
+        })
+        .collect();
+
+    input_paths.par_iter().for_each(|input_file| {
+        macro_rules! skip {
+            () => {
+                {
+                    return;
+                }
+            };
+            ($($tokens:tt)*) => {
+                {
+                    eprintln!("Error: {}", format_args!($($tokens)*));
+                    return;
+                }
+            };
+        }
+
+        let Some(stem) = input_file.file_stem() else {
+            skip!("unable to convert {}", input_file.display());
+        };
+        let Some(stem) = stem.to_str() else {
+            skip!("unable to convert {}", input_file.display());
+        };
+
+        let output_file = output_dir.join(format!("{stem}.pcd"));
+
+        if let Err(err) = libpcl_pcd_file_raw_bin_file(input_file, &output_file) {
+            skip!("unable to write {}: {err}", output_file.display());
+        }
+    });
     Ok(())
 }
 
-fn count_frames_in_velodyne_pcap<P>(
-    path: P,
-    model: ProductID,
-    mode: VelodyneReturnMode,
-) -> Result<usize>
+fn bin_file_to_libpcl_pcd_file<I, O>(input_file: I, output_file: O) -> Result<()>
 where
-    P: AsRef<Path>,
+    I: AsRef<Path>,
+    O: AsRef<Path>,
 {
-    let config = build_velodyne_config(model, mode.0)?;
-    let count = frame_xyz_iter_from_file(config, path)?.count();
-    Ok(count)
+    let points = load_bin(input_file)?;
+    let iter = points.iter().map(|p| {
+        let BinPoint { x, y, z, .. } = *p;
+        [x, y, z]
+    });
+
+    create_pcd_file_single(iter, output_file, points.len(), 1)?;
+    Ok(())
+}
+
+fn bin_dir_to_libpcl_dir<I, O>(input_dir: I, output_dir: O) -> Result<()>
+where
+    I: AsRef<Path>,
+    O: AsRef<Path>,
+{
+    let output_dir = output_dir.as_ref();
+    fs::create_dir(&output_dir)
+        .with_context(|| format!("unable to create directory {}", output_dir.display()))?;
+
+    let input_paths: Vec<_> = input_dir
+        .as_ref()
+        .read_dir()?
+        .filter_map(|entry| {
+            macro_rules! skip {
+                () => {
+                    {
+                        return None;
+                    }
+                };
+                ($($tokens:tt)*) => {
+                    {
+                        eprintln!("Error: {}", format_args!($($tokens)*));
+                        return None
+                    }
+                };
+            }
+
+            let path = match entry {
+                Ok(entry) => entry.path(),
+                Err(err) => skip!("{err}"),
+            };
+
+            match path.extension() {
+                Some(ext) => {
+                    if ext != "bin" {
+                        skip!();
+                    }
+                }
+                None => skip!(),
+            }
+
+            match path.canonicalize() {
+                Ok(path) => {
+                    if !path.is_file() {
+                        skip!();
+                    }
+                }
+                Err(err) => skip!("Unable to read {}: {err}", path.display()),
+            };
+
+            Some(path)
+        })
+        .collect();
+
+    input_paths.par_iter().for_each(|input_file| {
+        macro_rules! skip {
+            () => {
+                {
+                    return;
+                }
+            };
+            ($($tokens:tt)*) => {
+                {
+                    eprintln!("Error: {}", format_args!($($tokens)*));
+                    return;
+                }
+            };
+        }
+
+        let points = match load_bin(input_file) {
+            Ok(points) => points,
+            Err(err) => skip!("unable to read {}: {err}", input_file.display()),
+        };
+
+        let iter = points.iter().map(|p| {
+            let BinPoint { x, y, z, .. } = *p;
+            [x, y, z]
+        });
+
+        let Some(stem) = input_file.file_stem() else {
+            skip!("unable to convert {}", input_file.display());
+        };
+        let Some(stem) = stem.to_str() else {
+            skip!("unable to convert {}", input_file.display());
+        };
+
+        let output_file = output_dir.join(format!("{stem}.pcd"));
+
+        if let Err(err) = create_pcd_file_single(iter, &output_file, points.len(), 1) {
+            skip!("unable to write {}: {err}", output_file.display());
+        };
+    });
+
+    Ok(())
 }

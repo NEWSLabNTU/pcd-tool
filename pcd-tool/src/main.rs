@@ -1,6 +1,7 @@
 mod convert;
 mod dump;
 mod info;
+mod io;
 mod opts;
 mod show;
 mod types;

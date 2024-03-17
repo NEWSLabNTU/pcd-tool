@@ -37,6 +37,7 @@ pub fn dump(args: Dump) -> Result<()> {
 
             dump_velodyne_pcap(&input, velodyne_model, velodyne_return_mode)?
         }
+        F::RawBin => todo!(),
     }
 
     Ok(())
