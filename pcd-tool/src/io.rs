@@ -186,7 +186,7 @@ where
 
 pub fn create_libpcl_pcd_reader<P>(
     input_path: P,
-) -> Result<pcd_rs::Reader<LibpclPoint, BufReader<File>>>
+) -> Result<pcd_rs::Reader<pcd_rs::DynRecord, BufReader<File>>>
 where
     P: AsRef<Path>,
 {

@@ -124,7 +124,7 @@ where
     PI: AsRef<Path>,
     PO: AsRef<Path>,
 {
-    // let mut reader = pcd_rs::Reader::open(input_path)?;
+    let input_path = input_path.as_ref();
     let mut reader = create_libpcl_pcd_reader(input_path)?;
     let pcd_rs::PcdMeta {
         width,
@@ -144,7 +144,12 @@ where
     .create(output_path)?;
 
     reader.try_for_each(|point| -> Result<_> {
-        let LibpclPoint { x, y, z, .. } = point?;
+        let Some([x, y, z]) = point?.to_xyz::<f32>() else {
+            bail!(
+                "the file {} misses one of x, y or z field",
+                input_path.display()
+            );
+        };
         let x = x as f64;
         let y = y as f64;
         let z = z as f64;
@@ -425,11 +430,17 @@ where
     I: AsRef<Path>,
     O: AsRef<Path>,
 {
+    let input_file = input_file.as_ref();
     let reader = create_libpcl_pcd_reader(input_file)?;
     let mut writer = RawBinWriter::from_path(output_file)?;
 
     for point in reader {
-        let LibpclPoint { x, y, z, rgb: _ } = point?;
+        let Some([x, y, z]) = point?.to_xyz::<f32>() else {
+            bail!(
+                "the file {} misses one of x, y or z field",
+                input_file.display()
+            );
+        };
         writer.push([x, y, z, 0.0])?;
     }
     writer.finish()?;
@@ -471,7 +482,7 @@ where
 
             match path.extension() {
                 Some(ext) => {
-                    if ext != "bin" {
+                    if ext != "pcd" {
                         skip!();
                     }
                 }
@@ -513,7 +524,7 @@ where
             skip!("unable to convert {}", input_file.display());
         };
 
-        let output_file = output_dir.join(format!("{stem}.pcd"));
+        let output_file = output_dir.join(format!("{stem}.bin"));
 
         if let Err(err) = libpcl_pcd_file_raw_bin_file(input_file, &output_file) {
             skip!("unable to write {}: {err}", output_file.display());
