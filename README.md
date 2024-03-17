@@ -26,10 +26,19 @@ pcd-tool info input.pcd
 cargo run --release -- convert \
     -i input.pcap \
     -o output/ \
+    -f pcap.velodyne \
     -t pcd.libpcl \
     --velodyne-model VLP32C \
     --velodyne-return-mode strongest
 ```
+
+`-f` and `-t` are input and output format options. Supported formats
+include:
+
+- pcd.libpcl
+- pcd.newslab
+- pcap.velodyne
+- raw.bin
 
 
 ### Visualize a Velodyne .pcap file
