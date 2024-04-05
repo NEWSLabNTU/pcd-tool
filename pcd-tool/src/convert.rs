@@ -1,7 +1,8 @@
 use crate::{
     io::{
-        count_frames_in_velodyne_pcap, create_pcd_file_dual, create_pcd_file_single,
-        create_pcd_reader, load_bin, RawBinWriter,
+        count_frames_in_velodyne_pcap, create_libpcl_pcd_file_dual, create_libpcl_pcd_file_single,
+        create_pcd_reader, create_raw_bin_file_dual, create_raw_bin_file_single, load_bin_iter,
+        RawBinWriter,
     },
     opts::{Convert, EndFrame, StartFrame, VelodyneReturnMode},
     types::{BinPoint, FileFormat},
@@ -9,6 +10,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use approx::abs_diff_eq;
+use itertools::Itertools;
 use nalgebra as na;
 use pcd_format::{LibpclPoint, NewslabV1Point};
 use rayon::prelude::*;
@@ -102,28 +104,35 @@ pub fn convert(opts: Convert) -> Result<()> {
             }
         }
         (F::VelodynePcap, F::RawBin) => {
-            todo!();
+            let velodyne_model = opts
+                .velodyne_model
+                .ok_or_else(|| anyhow!("--velodyne-mode must be set"))?;
+            let velodyne_return_mode = opts
+                .velodyne_return_mode
+                .ok_or_else(|| anyhow!("--velodyne-return-mode must be set"))?;
+
+            velodyne_pcap_to_raw_bin(
+                input_path,
+                output_path,
+                velodyne_model,
+                velodyne_return_mode,
+                opts.start,
+                opts.end,
+                tf,
+            )?;
         }
         (F::RawBin, F::LibpclPcd) => {
             if is_file(input_path)? {
                 bin_file_to_libpcl_pcd_file(input_path, output_path, tf)?;
             } else {
-                bin_dir_to_libpcl_dir(input_path, output_path, tf)?;
+                bin_dir_to_libpcl_pcd_dir(input_path, output_path, tf)?;
             }
         }
         (F::RawBin, F::NewslabPcd) => {
-            if is_file(input_path)? {
-                todo!();
-            } else {
-                todo!();
-            }
+            bail!("conversion from raw.bin to pcd.newslab is not supported");
         }
         (F::RawBin, F::VelodynePcap) => {
-            if is_file(input_path)? {
-                todo!();
-            } else {
-                todo!();
-            }
+            bail!("converting to pcap.velodyne is not supported");
         }
         (F::LibpclPcd, F::LibpclPcd)
         | (F::NewslabPcd, F::NewslabPcd)
@@ -404,12 +413,12 @@ where
                     F::Single16(frame) => {
                         let width = frame.firings.len();
                         let points = frame.into_point_iter().map(map_point_single);
-                        create_pcd_file_single(points, pcd_file, width, 16)?;
+                        create_libpcl_pcd_file_single(points, pcd_file, width, 16)?;
                     }
                     F::Single32(frame) => {
                         let width = frame.firings.len();
                         let points = frame.into_point_iter().map(map_point_single);
-                        create_pcd_file_single(points, pcd_file, width, 32)?;
+                        create_libpcl_pcd_file_single(points, pcd_file, width, 32)?;
                     }
                     _ => unreachable!(),
                 }
@@ -426,12 +435,12 @@ where
                     F::Single16(frame) => {
                         let width = frame.firings.len();
                         let points = frame.into_point_iter().map(map_point_single);
-                        create_pcd_file_single(points, pcd_file, width, 16)?;
+                        create_libpcl_pcd_file_single(points, pcd_file, width, 16)?;
                     }
                     F::Single32(frame) => {
                         let width = frame.firings.len();
                         let points = frame.into_point_iter().map(map_point_single);
-                        create_pcd_file_single(points, pcd_file, width, 32)?;
+                        create_libpcl_pcd_file_single(points, pcd_file, width, 32)?;
                     }
                     _ => unreachable!(),
                 }
@@ -449,12 +458,187 @@ where
                     F::Dual16(frame) => {
                         let width = frame.firings.len();
                         let points = frame.into_point_iter().map(map_point_dual);
-                        create_pcd_file_dual(points, pcd_file_strongest, pcd_file_last, width, 16)?;
+                        create_libpcl_pcd_file_dual(
+                            points,
+                            pcd_file_strongest,
+                            pcd_file_last,
+                            width,
+                            16,
+                        )?;
                     }
                     F::Dual32(frame) => {
                         let width = frame.firings.len();
                         let points = frame.into_point_iter().map(map_point_dual);
-                        create_pcd_file_dual(points, pcd_file_strongest, pcd_file_last, width, 32)?;
+                        create_libpcl_pcd_file_dual(
+                            points,
+                            pcd_file_strongest,
+                            pcd_file_last,
+                            width,
+                            32,
+                        )?;
+                    }
+                    _ => unreachable!(),
+                }
+
+                anyhow::Ok(())
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn velodyne_pcap_to_raw_bin<I, O>(
+    input_file: I,
+    output_dir: O,
+    model: ProductID,
+    mode: VelodyneReturnMode,
+    start: StartFrame,
+    end: EndFrame,
+    tf: Option<na::Isometry3<f32>>,
+) -> Result<()>
+where
+    I: AsRef<Path>,
+    O: AsRef<Path>,
+{
+    use FormatKind as F;
+    use ReturnMode as R;
+
+    let num_frames = count_frames_in_velodyne_pcap(input_file.as_ref(), model, mode)?;
+
+    let start = match start {
+        StartFrame::Forward(count) => count - 1,
+        StartFrame::Backward(count) => {
+            let Some(end) = num_frames.checked_sub(count) else {
+                bail!("--start position is out of bound");
+            };
+            end
+        }
+    };
+    let end = match end {
+        EndFrame::Forward(count) => {
+            ensure!(count <= num_frames, "--end position is out of bound");
+            count
+        }
+        EndFrame::Backward(count) => {
+            let Some(end) = (num_frames + 1).checked_sub(count) else {
+                bail!("--end position is out of bound");
+            };
+            end
+        }
+        EndFrame::Count(count) => {
+            let end = start + count;
+            ensure!(count <= num_frames, "--end position is out of bound");
+            end
+        }
+    };
+    let Some(count) = end.checked_sub(start) else {
+        bail!("--start position must go before --end position");
+    };
+
+    // closures
+    let map_measurement = |measurement: Measurement| {
+        let [x, y, z] = measurement.xyz;
+        [
+            x.as_meters() as f32,
+            y.as_meters() as f32,
+            z.as_meters() as f32,
+        ]
+    };
+
+    let map_point_single = |point: PointS| transform_point(map_measurement(point.measurement), tf);
+    let map_point_dual = |point: PointD| {
+        let MeasurementDual {
+            strongest: strongest_measure,
+            last: last_measure,
+        } = point.measurements;
+        let strongest_point = transform_point(map_measurement(strongest_measure), tf);
+        let last_point = transform_point(map_measurement(last_measure), tf);
+        (strongest_point, last_point)
+    };
+
+    // create the velodyne-lidar config
+    let config = build_velodyne_config(model, mode.0)?;
+
+    // Create output directories
+    let output_dir = output_dir.as_ref();
+    let strongest_output_dir = output_dir.join("strongest");
+    let last_output_dir = output_dir.join("last");
+    fs::create_dir(output_dir)?;
+
+    match mode.0 {
+        R::Strongest => {
+            fs::create_dir(&strongest_output_dir)?;
+        }
+        R::Last => {
+            fs::create_dir(&last_output_dir)?;
+        }
+        R::Dual => {
+            fs::create_dir(&strongest_output_dir)?;
+            fs::create_dir(&last_output_dir)?;
+        }
+    }
+
+    let mut frames = frame_xyz_iter_from_file(config, input_file)?
+        .enumerate()
+        .skip(start)
+        .take(count);
+
+    match mode.0 {
+        R::Strongest => {
+            frames.try_for_each(|(index, frame)| {
+                let file_name = format!("{:06}.bin", index);
+                let bin_file = strongest_output_dir.join(file_name);
+
+                match frame? {
+                    F::Single16(frame) => {
+                        let points = frame.into_point_iter().map(map_point_single);
+                        create_raw_bin_file_single(points, bin_file)?;
+                    }
+                    F::Single32(frame) => {
+                        let points = frame.into_point_iter().map(map_point_single);
+                        create_raw_bin_file_single(points, bin_file)?;
+                    }
+                    _ => unreachable!(),
+                }
+
+                anyhow::Ok(())
+            })?;
+        }
+        R::Last => {
+            frames.try_for_each(|(index, frame)| {
+                let file_name = format!("{:06}.bin", index);
+                let bin_file = last_output_dir.join(file_name);
+
+                match frame? {
+                    F::Single16(frame) => {
+                        let points = frame.into_point_iter().map(map_point_single);
+                        create_raw_bin_file_single(points, bin_file)?;
+                    }
+                    F::Single32(frame) => {
+                        let points = frame.into_point_iter().map(map_point_single);
+                        create_raw_bin_file_single(points, bin_file)?;
+                    }
+                    _ => unreachable!(),
+                }
+
+                anyhow::Ok(())
+            })?;
+        }
+        R::Dual => {
+            frames.try_for_each(|(index, frame)| {
+                let file_name = format!("{:06}.bin", index);
+                let bin_file_strongest = strongest_output_dir.join(&file_name);
+                let bin_file_last = last_output_dir.join(&file_name);
+
+                match frame? {
+                    F::Dual16(frame) => {
+                        let points = frame.into_point_iter().map(map_point_dual);
+                        create_raw_bin_file_dual(points, bin_file_strongest, bin_file_last)?;
+                    }
+                    F::Dual32(frame) => {
+                        let points = frame.into_point_iter().map(map_point_dual);
+                        create_raw_bin_file_dual(points, bin_file_strongest, bin_file_last)?;
                     }
                     _ => unreachable!(),
                 }
@@ -634,18 +818,20 @@ where
     I: AsRef<Path>,
     O: AsRef<Path>,
 {
-    let points = load_bin(input_file)?;
-    let iter = points.iter().map(|p| {
-        let BinPoint { x, y, z, .. } = *p;
-        let [x, y, z] = transform_point([x, y, z], tf);
-        [x, y, z]
-    });
+    let points: Vec<_> = load_bin_iter(input_file)?
+        .map(|p| -> Result<_> {
+            let BinPoint { x, y, z, .. } = p?;
+            let [x, y, z] = transform_point([x, y, z], tf);
+            Ok([x, y, z])
+        })
+        .try_collect()?;
 
-    create_pcd_file_single(iter, output_file, points.len(), 1)?;
+    let num_points = points.len();
+    create_libpcl_pcd_file_single(points, output_file, num_points, 1)?;
     Ok(())
 }
 
-fn bin_dir_to_libpcl_dir<I, O>(
+fn bin_dir_to_libpcl_pcd_dir<I, O>(
     input_dir: I,
     output_dir: O,
     tf: Option<na::Isometry3<f32>>,
@@ -718,16 +904,22 @@ where
             };
         }
 
-        let points = match load_bin(input_file) {
+        let points = match load_bin_iter(input_file) {
             Ok(points) => points,
             Err(err) => skip!("unable to read {}: {err}", input_file.display()),
         };
 
-        let iter = points.iter().map(|p| {
-            let BinPoint { x, y, z, .. } = *p;
-            let [x, y, z] = transform_point([x, y, z], tf);
-            [x, y, z]
-        });
+        let points: Result<Vec<_>> = points
+            .map(|p| -> Result<_> {
+                let BinPoint { x, y, z, .. } = p?;
+                let [x, y, z] = transform_point([x, y, z], tf);
+                Ok([x, y, z])
+            })
+            .collect();
+        let points = match points {
+            Ok(points) => points,
+            Err(err) => skip!("unable to read {}: {err}", input_file.display()),
+        };
 
         let Some(stem) = input_file.file_stem() else {
             skip!("unable to convert {}", input_file.display());
@@ -738,7 +930,8 @@ where
 
         let output_file = output_dir.join(format!("{stem}.pcd"));
 
-        if let Err(err) = create_pcd_file_single(iter, &output_file, points.len(), 1) {
+        let num_points = points.len();
+        if let Err(err) = create_libpcl_pcd_file_single(points, &output_file, num_points, 1) {
             skip!("unable to write {}: {err}", output_file.display());
         };
     });

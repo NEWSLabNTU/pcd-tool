@@ -6,6 +6,7 @@ use pcd_rs::DataKind;
 use std::{
     fs::File,
     io::{self, prelude::*, BufReader, BufWriter},
+    iter,
     path::Path,
 };
 use velodyne_lidar::{iter::frame_xyz_iter_from_file, ProductID};
@@ -45,7 +46,57 @@ impl Drop for RawBinWriter {
     }
 }
 
-pub fn load_bin<P>(path: P) -> Result<Vec<BinPoint>>
+// pub fn load_bin<P>(path: P) -> Result<Vec<BinPoint>>
+// where
+//     P: AsRef<Path>,
+// {
+//     let pcd_path = path.as_ref();
+
+//     let mut input = BufReader::new(
+//         File::open(pcd_path)
+//             .with_context(|| format!("Failed to open file {}", pcd_path.display()))?,
+//     );
+
+//     macro_rules! read_f32 {
+//         () => {{
+//             input.read_f32::<LittleEndian>()
+//         }};
+//     }
+
+//     macro_rules! try_read_f32 {
+//         () => {{
+//             let mut buf = [0u8; 4];
+//             let cnt = input.read(&mut buf)?;
+
+//             match cnt {
+//                 4 => Ok(Some(f32::from_le_bytes(buf))),
+//                 0 => Ok(None),
+//                 cnt => Err(io::Error::new(
+//                     io::ErrorKind::UnexpectedEof,
+//                     format!("Truncated f32 found. Expect 4 bytes, but read {cnt} bytes."),
+//                 )),
+//             }
+//         }};
+//     }
+
+//     let mut points = vec![];
+
+//     loop {
+//         let Some(x) = try_read_f32!()? else {
+//             break;
+//         };
+//         let y = read_f32!()?;
+//         let z = read_f32!()?;
+//         let intensity = read_f32!()?;
+
+//         let point = BinPoint { x, y, z, intensity };
+//         points.push(point);
+//     }
+
+//     Ok(points)
+// }
+
+pub fn load_bin_iter<P>(path: P) -> Result<impl Iterator<Item = Result<BinPoint>>>
 where
     P: AsRef<Path>,
 {
@@ -78,24 +129,22 @@ where
         }};
     }
 
-    let mut points = vec![];
-
-    loop {
+    let mut next = move || {
         let Some(x) = try_read_f32!()? else {
-            break;
+            return Ok(None);
         };
         let y = read_f32!()?;
         let z = read_f32!()?;
         let intensity = read_f32!()?;
 
         let point = BinPoint { x, y, z, intensity };
-        points.push(point);
-    }
+        Ok(Some(point))
+    };
 
-    Ok(points)
+    Ok(iter::from_fn(move || next().transpose()))
 }
 
-pub fn create_pcd_file_single<P, I>(
+pub fn create_libpcl_pcd_file_single<P, I>(
     points: I,
     pcd_file: P,
     width: usize,
@@ -126,7 +175,7 @@ where
     Ok(())
 }
 
-pub fn create_pcd_file_dual<P1, P2, I>(
+pub fn create_libpcl_pcd_file_dual<P1, P2, I>(
     points: I,
     pcd_file1: P1,
     pcd_file2: P2,
@@ -166,6 +215,50 @@ where
             writer2.push(&p2)?;
             Ok(())
         })?;
+    writer1.finish()?;
+    writer2.finish()?;
+
+    Ok(())
+}
+
+pub fn create_raw_bin_file_single<P, I>(points: I, bin_file: P) -> Result<()>
+where
+    P: AsRef<Path>,
+    I: IntoIterator<Item = [f32; 3]>,
+{
+    let mut writer = RawBinWriter::from_path(bin_file)?;
+
+    for [x, y, z] in points {
+        writer.push([x, y, z, 0.0])?;
+    }
+
+    writer.finish()?;
+    Ok(())
+}
+
+pub fn create_raw_bin_file_dual<P1, P2, I>(points: I, bin_file1: P1, bin_file2: P2) -> Result<()>
+where
+    P1: AsRef<Path>,
+    P2: AsRef<Path>,
+    I: IntoIterator<Item = ([f32; 3], [f32; 3])>,
+{
+    let mut writer1 = RawBinWriter::from_path(bin_file1)?;
+    let mut writer2 = RawBinWriter::from_path(bin_file2)?;
+
+    points.into_iter().try_for_each(|(p1, p2)| -> Result<_> {
+        {
+            let [x, y, z] = p1;
+            writer1.push([x, y, z, 0.0])?;
+        }
+
+        {
+            let [x, y, z] = p2;
+            writer2.push([x, y, z, 0.0])?;
+        }
+        Ok(())
+    })?;
+
+    writer1.finish()?;
     writer2.finish()?;
 
     Ok(())
