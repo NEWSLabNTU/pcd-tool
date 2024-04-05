@@ -184,7 +184,7 @@ where
     Ok(count)
 }
 
-pub fn create_libpcl_pcd_reader<P>(
+pub fn create_pcd_reader<P>(
     input_path: P,
 ) -> Result<pcd_rs::Reader<pcd_rs::DynRecord, BufReader<File>>>
 where

@@ -1,7 +1,7 @@
 use crate::{
     io::{
-        count_frames_in_velodyne_pcap, create_libpcl_pcd_reader, create_pcd_file_dual,
-        create_pcd_file_single, load_bin, RawBinWriter,
+        count_frames_in_velodyne_pcap, create_pcd_file_dual, create_pcd_file_single,
+        create_pcd_reader, load_bin, RawBinWriter,
     },
     opts::{Convert, EndFrame, StartFrame, VelodyneReturnMode},
     types::{BinPoint, FileFormat},
@@ -94,30 +94,37 @@ pub fn convert(opts: Convert) -> Result<()> {
         (F::LibpclPcd | F::NewslabPcd, F::VelodynePcap) => {
             bail!("converting to pcap.velodyne is not supported");
         }
-        (F::LibpclPcd, F::RawBin) => {
-            let path = input_path.canonicalize()?;
-            let input_is_file = path.is_file();
-
-            if input_is_file {
-                libpcl_pcd_file_raw_bin_file(input_path, output_path, tf)?;
+        (F::LibpclPcd | F::NewslabPcd, F::RawBin) => {
+            if is_file(input_path)? {
+                pcd_file_raw_bin_file(input_path, output_path, tf)?;
             } else {
-                libpcl_pcd_dir_raw_bin_dir(input_path, output_path, tf)?;
+                pcd_dir_raw_bin_dir(input_path, output_path, tf)?;
             }
         }
-        (F::NewslabPcd, F::RawBin) => todo!(),
-        (F::VelodynePcap, F::RawBin) => todo!(),
+        (F::VelodynePcap, F::RawBin) => {
+            todo!();
+        }
         (F::RawBin, F::LibpclPcd) => {
-            let path = input_path.canonicalize()?;
-            let input_is_file = path.is_file();
-
-            if input_is_file {
+            if is_file(input_path)? {
                 bin_file_to_libpcl_pcd_file(input_path, output_path, tf)?;
             } else {
                 bin_dir_to_libpcl_dir(input_path, output_path, tf)?;
             }
         }
-        (F::RawBin, F::NewslabPcd) => todo!(),
-        (F::RawBin, F::VelodynePcap) => todo!(),
+        (F::RawBin, F::NewslabPcd) => {
+            if is_file(input_path)? {
+                todo!();
+            } else {
+                todo!();
+            }
+        }
+        (F::RawBin, F::VelodynePcap) => {
+            if is_file(input_path)? {
+                todo!();
+            } else {
+                todo!();
+            }
+        }
         (F::LibpclPcd, F::LibpclPcd)
         | (F::NewslabPcd, F::NewslabPcd)
         | (F::VelodynePcap, F::VelodynePcap)
@@ -147,7 +154,7 @@ where
     PO: AsRef<Path>,
 {
     let input_path = input_path.as_ref();
-    let mut reader = create_libpcl_pcd_reader(input_path)?;
+    let mut reader = create_pcd_reader(input_path)?;
     let pcd_rs::PcdMeta {
         width,
         height,
@@ -460,7 +467,7 @@ where
     Ok(())
 }
 
-fn libpcl_pcd_file_raw_bin_file<I, O>(
+fn pcd_file_raw_bin_file<I, O>(
     input_file: I,
     output_file: O,
     tf: Option<na::Isometry3<f32>>,
@@ -470,25 +477,66 @@ where
     O: AsRef<Path>,
 {
     let input_file = input_file.as_ref();
-    let reader = create_libpcl_pcd_reader(input_file)?;
+    let reader = create_pcd_reader(input_file)?;
     let mut writer = RawBinWriter::from_path(output_file)?;
 
+    let intensity_field = reader
+        .meta()
+        .field_defs
+        .fields
+        .iter()
+        .enumerate()
+        .find(|(_, field)| field.name == "intensity");
+
+    let intensity_idx = match intensity_field {
+        Some((idx, field)) => {
+            if field.count == 1 {
+                Some(idx)
+            } else {
+                eprintln!("the intensity field is not a single number");
+                None
+            }
+        }
+        None => None,
+    };
+
     for point in reader {
-        let Some([x, y, z]) = point?.to_xyz::<f32>() else {
+        let point = point?;
+
+        let intensity = match intensity_idx {
+            Some(idx) => {
+                let val = match &point.0[idx] {
+                    pcd_rs::Field::I8(vec) => vec[0] as f32,
+                    pcd_rs::Field::I16(vec) => vec[0] as f32,
+                    pcd_rs::Field::I32(vec) => vec[0] as f32,
+                    pcd_rs::Field::U8(vec) => vec[0] as f32,
+                    pcd_rs::Field::U16(vec) => vec[0] as f32,
+                    pcd_rs::Field::U32(vec) => vec[0] as f32,
+                    pcd_rs::Field::F32(vec) => vec[0],
+                    pcd_rs::Field::F64(vec) => vec[0] as f32,
+                };
+                Some(val)
+            }
+            None => None,
+        };
+        let intensity = intensity.unwrap_or(0.0);
+
+        let Some([x, y, z]) = point.to_xyz::<f32>() else {
             bail!(
                 "the file {} misses one of x, y or z field",
                 input_file.display()
             );
         };
+
         let [x, y, z] = transform_point([x, y, z], tf);
-        writer.push([x, y, z, 0.0])?;
+        writer.push([x, y, z, intensity])?;
     }
     writer.finish()?;
 
     Ok(())
 }
 
-fn libpcl_pcd_dir_raw_bin_dir<I, O>(
+fn pcd_dir_raw_bin_dir<I, O>(
     input_dir: I,
     output_dir: O,
     tf: Option<na::Isometry3<f32>>,
@@ -570,7 +618,7 @@ where
 
         let output_file = output_dir.join(format!("{stem}.bin"));
 
-        if let Err(err) = libpcl_pcd_file_raw_bin_file(input_file, &output_file, tf) {
+        if let Err(err) = pcd_file_raw_bin_file(input_file, &output_file, tf) {
             skip!("unable to write {}: {err}", output_file.display());
         }
     });
@@ -706,4 +754,11 @@ where
         Some(tf) => (tf * na::Vector3::from(point)).into(),
         None => point,
     }
+}
+
+fn is_file<P>(path: P) -> Result<bool>
+where
+    P: AsRef<Path>,
+{
+    Ok(path.as_ref().canonicalize()?.is_file())
 }
