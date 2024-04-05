@@ -134,8 +134,10 @@ pub fn convert(opts: Convert) -> Result<()> {
         (F::RawBin, F::VelodynePcap) => {
             bail!("converting to pcap.velodyne is not supported");
         }
-        (F::LibpclPcd, F::LibpclPcd)
-        | (F::NewslabPcd, F::NewslabPcd)
+        (F::LibpclPcd, F::LibpclPcd) => {
+            libpcl_pcd_to_libpcl_pcd(input_path, output_path, tf)?;
+        }
+        (F::NewslabPcd, F::NewslabPcd)
         | (F::VelodynePcap, F::VelodynePcap)
         | (F::RawBin, F::RawBin) => {
             match (opts.start, opts.end) {
@@ -145,10 +147,98 @@ pub fn convert(opts: Convert) -> Result<()> {
                 }
             }
 
+            if tf.is_some() {
+                bail!("--transform and --transform-file are not supported ");
+            }
+
             // Simply copy the file
             fs::copy(input_path, output_path)?;
         }
     }
+
+    Ok(())
+}
+
+fn libpcl_pcd_to_libpcl_pcd<PI, PO>(
+    input_path: PI,
+    output_path: PO,
+    tf: Option<na::Isometry3<f32>>,
+) -> Result<()>
+where
+    PI: AsRef<Path>,
+    PO: AsRef<Path>,
+{
+    let Some(tf) = tf else {
+        // Simply copy the file
+        fs::copy(input_path, output_path)?;
+        return Ok(());
+    };
+
+    let input_path = input_path.as_ref();
+    let mut reader = create_pcd_reader(input_path)?;
+    let pcd_rs::PcdMeta {
+        width,
+        height,
+        ref viewpoint,
+        data,
+        ref field_defs,
+        ..
+    } = *reader.meta();
+
+    let mut writer = pcd_rs::WriterInit {
+        width,
+        height,
+        viewpoint: viewpoint.clone(),
+        data_kind: data,
+        schema: Some(field_defs.clone()),
+    }
+    .create(output_path)?;
+
+    let find_field = |name| {
+        let field = field_defs
+            .fields
+            .iter()
+            .enumerate()
+            .find(|(_, field)| field.name == name);
+
+        match field {
+            Some((idx, _)) => Ok(idx),
+            None => bail!(r#""{name}" field is required but is not found"#),
+        }
+    };
+
+    let x_idx = find_field("x")?;
+    let y_idx = find_field("y")?;
+    let z_idx = find_field("z")?;
+
+    let set_value = |field: &mut pcd_rs::Field, value: f32| {
+        match field {
+            pcd_rs::Field::F32(vec) => vec[0] = value,
+            pcd_rs::Field::F64(vec) => vec[0] = value as f64,
+            _ => bail!("transforming non-floating point coordinates is not supported"),
+        }
+        Ok(())
+    };
+
+    reader.try_for_each(|point| -> Result<_> {
+        let mut point = point?;
+        let Some([x, y, z]) = point.to_xyz::<f32>() else {
+            bail!(
+                "the file {} misses one of x, y or z field",
+                input_path.display()
+            );
+        };
+
+        let [x, y, z] = transform_point([x, y, z], Some(tf));
+        set_value(&mut point.0[x_idx], x)?;
+        set_value(&mut point.0[y_idx], y)?;
+        set_value(&mut point.0[z_idx], z)?;
+
+        writer.push(&point)?;
+        Ok(())
+    })?;
+
+    writer.finish()?;
 
     Ok(())
 }
