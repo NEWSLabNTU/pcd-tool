@@ -102,6 +102,20 @@ pub struct Convert {
     /// frame.
     #[clap(long, default_value = "-1", value_parser = parse_end_or_count)]
     pub end: EndFrame,
+
+    /// Apply point transformation described in the file.
+    ///
+    /// The transformation file format is defined in tftk.
+    /// https://github.com/NEWSLabNTU/tftk#file-format
+    #[clap(long)]
+    pub transform_file: Option<PathBuf>,
+
+    /// Apply point transformation according to the text description.
+    ///
+    /// The transformation text format is defined in tftk.
+    /// https://github.com/NEWSLabNTU/tftk#file-format
+    #[clap(long)]
+    pub transform: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -25,3 +25,6 @@ ratatui = "0.23.0"
 crossterm = "0.27.0"
 byteorder = "1.5.0"
 rayon = "1.9.0"
+tf-format = { version = "0.1.0", git = "https://github.com/NEWSLabNTU/tftk.git", rev = "ffed9b60244191554abbb32c9660986cf7c88c7d" }
+serde_json = "1.0.115"
+nalgebra = "0.32.5"

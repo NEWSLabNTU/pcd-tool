@@ -9,6 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use approx::abs_diff_eq;
+use nalgebra as na;
 use pcd_format::{LibpclPoint, NewslabV1Point};
 use rayon::prelude::*;
 use std::{
@@ -16,9 +17,11 @@ use std::{
         self,
         consts::{FRAC_PI_2, PI},
     },
-    fs,
+    fs::{self, File},
+    io::BufReader,
     path::Path,
 };
+use tf_format::MaybeTransform;
 use velodyne_lidar::{
     iter::frame_xyz_iter_from_file,
     types::{
@@ -32,6 +35,20 @@ use velodyne_lidar::{
 pub fn convert(opts: Convert) -> Result<()> {
     let input_path = &opts.input;
     let output_path = &opts.output;
+
+    let tf: Option<na::Isometry3<f32>> = match (&opts.transform_file, &opts.transform) {
+        (None, None) => None,
+        (Some(file), None) => {
+            let reader = BufReader::new(File::open(file)?);
+            let tf: MaybeTransform = serde_json::from_reader(reader)?;
+            Some(tf.to_na_isometry3())
+        }
+        (None, Some(text)) => {
+            let tf: MaybeTransform = serde_json::from_str(text)?;
+            Some(tf.to_na_isometry3())
+        }
+        (Some(_), Some(_)) => bail!("--transform and --transform-file cannot be both specified"),
+    };
 
     let input_format = match opts.from {
         Some(format) => format,
@@ -48,10 +65,10 @@ pub fn convert(opts: Convert) -> Result<()> {
 
     match (input_format, output_format) {
         (F::LibpclPcd, F::NewslabPcd) => {
-            libpcl_pcd_to_newslab_pcd(input_path, output_path)?;
+            libpcl_pcd_to_newslab_pcd(input_path, output_path, tf)?;
         }
         (F::NewslabPcd, F::LibpclPcd) => {
-            newslab_pcd_to_libpcl_pcd(input_path, output_path)?;
+            newslab_pcd_to_libpcl_pcd(input_path, output_path, tf)?;
         }
         (F::VelodynePcap, F::LibpclPcd) => {
             let velodyne_model = opts
@@ -68,6 +85,7 @@ pub fn convert(opts: Convert) -> Result<()> {
                 velodyne_return_mode,
                 opts.start,
                 opts.end,
+                tf,
             )?;
         }
         (F::VelodynePcap, F::NewslabPcd) => {
@@ -81,9 +99,9 @@ pub fn convert(opts: Convert) -> Result<()> {
             let input_is_file = path.is_file();
 
             if input_is_file {
-                libpcl_pcd_file_raw_bin_file(input_path, output_path)?;
+                libpcl_pcd_file_raw_bin_file(input_path, output_path, tf)?;
             } else {
-                libpcl_pcd_dir_raw_bin_dir(input_path, output_path)?;
+                libpcl_pcd_dir_raw_bin_dir(input_path, output_path, tf)?;
             }
         }
         (F::NewslabPcd, F::RawBin) => todo!(),
@@ -93,9 +111,9 @@ pub fn convert(opts: Convert) -> Result<()> {
             let input_is_file = path.is_file();
 
             if input_is_file {
-                bin_file_to_libpcl_pcd_file(input_path, output_path)?;
+                bin_file_to_libpcl_pcd_file(input_path, output_path, tf)?;
             } else {
-                bin_dir_to_libpcl_dir(input_path, output_path)?;
+                bin_dir_to_libpcl_dir(input_path, output_path, tf)?;
             }
         }
         (F::RawBin, F::NewslabPcd) => todo!(),
@@ -119,7 +137,11 @@ pub fn convert(opts: Convert) -> Result<()> {
     Ok(())
 }
 
-fn libpcl_pcd_to_newslab_pcd<PI, PO>(input_path: PI, output_path: PO) -> Result<()>
+fn libpcl_pcd_to_newslab_pcd<PI, PO>(
+    input_path: PI,
+    output_path: PO,
+    tf: Option<na::Isometry3<f32>>,
+) -> Result<()>
 where
     PI: AsRef<Path>,
     PO: AsRef<Path>,
@@ -150,6 +172,9 @@ where
                 input_path.display()
             );
         };
+
+        let [x, y, z] = transform_point([x, y, z], tf);
+
         let x = x as f64;
         let y = y as f64;
         let z = z as f64;
@@ -218,7 +243,11 @@ where
     Ok(())
 }
 
-fn newslab_pcd_to_libpcl_pcd<PI, PO>(input_path: PI, output_path: PO) -> Result<()>
+fn newslab_pcd_to_libpcl_pcd<PI, PO>(
+    input_path: PI,
+    output_path: PO,
+    tf: Option<na::Isometry3<f32>>,
+) -> Result<()>
 where
     PI: AsRef<Path>,
     PO: AsRef<Path>,
@@ -243,9 +272,14 @@ where
 
     reader.try_for_each(|point| -> Result<_> {
         let NewslabV1Point { x, y, z, .. } = point?;
+
         let x = x as f32;
         let y = y as f32;
         let z = z as f32;
+
+        // Transform points
+        let [x, y, z] = transform_point([x, y, z], tf);
+
         let point = LibpclPoint { x, y, z, rgb: 0 };
 
         writer.push(&point)?;
@@ -264,6 +298,7 @@ fn velodyne_pcap_to_libpcl_pcd<I, O>(
     mode: VelodyneReturnMode,
     start: StartFrame,
     end: EndFrame,
+    tf: Option<na::Isometry3<f32>>,
 ) -> Result<()>
 where
     I: AsRef<Path>,
@@ -314,14 +349,14 @@ where
         ]
     };
 
-    let map_point_single = |point: PointS| map_measurement(point.measurement);
+    let map_point_single = |point: PointS| transform_point(map_measurement(point.measurement), tf);
     let map_point_dual = |point: PointD| {
         let MeasurementDual {
             strongest: strongest_measure,
             last: last_measure,
         } = point.measurements;
-        let strongest_point = map_measurement(strongest_measure);
-        let last_point = map_measurement(last_measure);
+        let strongest_point = transform_point(map_measurement(strongest_measure), tf);
+        let last_point = transform_point(map_measurement(last_measure), tf);
         (strongest_point, last_point)
     };
 
@@ -425,7 +460,11 @@ where
     Ok(())
 }
 
-fn libpcl_pcd_file_raw_bin_file<I, O>(input_file: I, output_file: O) -> Result<()>
+fn libpcl_pcd_file_raw_bin_file<I, O>(
+    input_file: I,
+    output_file: O,
+    tf: Option<na::Isometry3<f32>>,
+) -> Result<()>
 where
     I: AsRef<Path>,
     O: AsRef<Path>,
@@ -441,6 +480,7 @@ where
                 input_file.display()
             );
         };
+        let [x, y, z] = transform_point([x, y, z], tf);
         writer.push([x, y, z, 0.0])?;
     }
     writer.finish()?;
@@ -448,7 +488,11 @@ where
     Ok(())
 }
 
-fn libpcl_pcd_dir_raw_bin_dir<I, O>(input_dir: I, output_dir: O) -> Result<()>
+fn libpcl_pcd_dir_raw_bin_dir<I, O>(
+    input_dir: I,
+    output_dir: O,
+    tf: Option<na::Isometry3<f32>>,
+) -> Result<()>
 where
     I: AsRef<Path>,
     O: AsRef<Path>,
@@ -526,14 +570,18 @@ where
 
         let output_file = output_dir.join(format!("{stem}.bin"));
 
-        if let Err(err) = libpcl_pcd_file_raw_bin_file(input_file, &output_file) {
+        if let Err(err) = libpcl_pcd_file_raw_bin_file(input_file, &output_file, tf) {
             skip!("unable to write {}: {err}", output_file.display());
         }
     });
     Ok(())
 }
 
-fn bin_file_to_libpcl_pcd_file<I, O>(input_file: I, output_file: O) -> Result<()>
+fn bin_file_to_libpcl_pcd_file<I, O>(
+    input_file: I,
+    output_file: O,
+    tf: Option<na::Isometry3<f32>>,
+) -> Result<()>
 where
     I: AsRef<Path>,
     O: AsRef<Path>,
@@ -541,6 +589,7 @@ where
     let points = load_bin(input_file)?;
     let iter = points.iter().map(|p| {
         let BinPoint { x, y, z, .. } = *p;
+        let [x, y, z] = transform_point([x, y, z], tf);
         [x, y, z]
     });
 
@@ -548,13 +597,17 @@ where
     Ok(())
 }
 
-fn bin_dir_to_libpcl_dir<I, O>(input_dir: I, output_dir: O) -> Result<()>
+fn bin_dir_to_libpcl_dir<I, O>(
+    input_dir: I,
+    output_dir: O,
+    tf: Option<na::Isometry3<f32>>,
+) -> Result<()>
 where
     I: AsRef<Path>,
     O: AsRef<Path>,
 {
     let output_dir = output_dir.as_ref();
-    fs::create_dir(&output_dir)
+    fs::create_dir(output_dir)
         .with_context(|| format!("unable to create directory {}", output_dir.display()))?;
 
     let input_paths: Vec<_> = input_dir
@@ -624,6 +677,7 @@ where
 
         let iter = points.iter().map(|p| {
             let BinPoint { x, y, z, .. } = *p;
+            let [x, y, z] = transform_point([x, y, z], tf);
             [x, y, z]
         });
 
@@ -642,4 +696,14 @@ where
     });
 
     Ok(())
+}
+
+fn transform_point<T>(point: [T; 3], tf: Option<na::Isometry3<T>>) -> [T; 3]
+where
+    T: na::RealField,
+{
+    match tf {
+        Some(tf) => (tf * na::Vector3::from(point)).into(),
+        None => point,
+    }
 }
