@@ -173,7 +173,6 @@ where
         fs::copy(input_path, output_path)?;
         return Ok(());
     };
-
     let input_path = input_path.as_ref();
     let mut reader = create_pcd_reader(input_path)?;
     let pcd_rs::PcdMeta {
@@ -1034,7 +1033,11 @@ where
     T: na::RealField,
 {
     match tf {
-        Some(tf) => (tf * na::Vector3::from(point)).into(),
+        Some(tf) => {
+            let input = na::Point3::from(point);
+            let output = tf * &input;
+            output.into()
+        }
         None => point,
     }
 }
