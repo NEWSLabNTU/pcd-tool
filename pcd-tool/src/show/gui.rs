@@ -11,7 +11,7 @@ pub struct PointAndColor {
 
 pub fn run_gui<I>(mut iter: I)
 where
-    I: Iterator<Item = Vec<PointAndColor>> + 'static,
+    I: DoubleEndedIterator<Item = Vec<PointAndColor>> + 'static,
 {
     let mut window = Window::new("pcd-tool");
     window.set_light(Light::StickToCamera);
@@ -23,7 +23,7 @@ where
 
 struct Gui<I>
 where
-    I: Iterator<Item = Vec<PointAndColor>>,
+    I: DoubleEndedIterator<Item = Vec<PointAndColor>>,
 {
     iter: I,
     points: Option<Vec<PointAndColor>>,
@@ -31,7 +31,7 @@ where
 
 impl<I> State for Gui<I>
 where
-    I: Iterator<Item = Vec<PointAndColor>> + 'static,
+    I: DoubleEndedIterator<Item = Vec<PointAndColor>> + 'static,
 {
     fn step(&mut self, window: &mut Window) {
         use WindowEvent as E;
@@ -55,9 +55,9 @@ where
                         (K::N, A::Press, false, false, false, false) => {
                             go_next = true;
                         }
-                        // (K::P, A::Press, false, false, false, false) => {
-                        //     go_prev = true;
-                        // }
+                        (K::P, A::Press, false, false, false, false) => {
+                            go_prev = true;
+                        }
                         _ => {}
                     };
                 }
@@ -67,9 +67,9 @@ where
 
         match (go_prev, go_next) {
             (true, false) => {
-                // if let Some(points) = self.iter.next_back() {
-                //     self.points = Some(points);
-                // }
+                if let Some(points) = self.iter.next_back() {
+                    self.points = Some(points);
+                }
             }
             (false, true) => {
                 if let Some(points) = self.iter.next() {
