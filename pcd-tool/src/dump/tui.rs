@@ -168,7 +168,7 @@ impl Tui {
         }
     }
 
-    fn render<'a, B: Backend + 'a>(&mut self, frame: &mut Frame<B>) {
+    fn render<'a>(&mut self, frame: &mut Frame) {
         let Self {
             ref mut table_height,
             ref mut table_state,
@@ -178,14 +178,14 @@ impl Tui {
             ..
         } = *self;
 
-        let area = frame.size();
+        let area = frame.area();
         *table_height = (area.height as usize).saturating_sub(3).max(1);
 
-        let table = Table::new(rows.clone())
+        let table = Table::new(rows.clone(), &self.widths)
             .header(header.clone())
             .widths(widths)
             .column_spacing(2)
-            .highlight_style(Style::default().fg(Color::Black).bg(Color::White));
+            .row_highlight_style(Style::default().fg(Color::Black).bg(Color::White));
 
         frame.render_stateful_widget(table, area, table_state);
     }
