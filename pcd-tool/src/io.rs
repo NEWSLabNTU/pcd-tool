@@ -1,6 +1,6 @@
 use crate::{opts::VelodyneReturnMode, types::BinPoint, utils::build_velodyne_config};
-use anyhow::{Context, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
+use eyre::{Context, Result};
 use pcd_format::LibpclPoint;
 use pcd_rs::DataKind;
 use std::{
@@ -283,5 +283,6 @@ pub fn create_pcd_reader<P>(
 where
     P: AsRef<Path>,
 {
-    pcd_rs::Reader::open(input_path)
+    let reader = pcd_rs::Reader::open(input_path)?;
+    Ok(reader)
 }

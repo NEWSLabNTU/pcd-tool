@@ -6,17 +6,16 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.91"
 console = "0.15.8"
 dialoguer = "0.11.0"
 iterator-ext = "0.2.1"
 pcd-format = { version = "0.2.0", path = "../pcd-format" }
-pcd-rs = "0.11.0"
+pcd-rs = "0.12.0"
 chrono = "0.4.38"
 pcap = "1.3.0"
 num-traits = "0.2.19"
 clap = { version = "4.5.20", features = ["derive"] }
-velodyne-lidar = { version = "0.2.0", features = ["pcap"] }
+velodyne-lidar = { version = "0.3.0", features = ["pcap"] }
 kiss3d = "0.35.0"
 itertools = "0.13.0"
 approx = "0.5.1"
@@ -28,3 +27,5 @@ rayon = "1.10.0"
 tf-format = { version = "0.1.0", git = "https://github.com/NEWSLabNTU/tftk.git", rev = "ffed9b60244191554abbb32c9660986cf7c88c7d" }
 serde_json = "1.0.132"
 nalgebra = "0.32.5"
+eyre = "0.6.12"
+color-eyre = "0.6.3"

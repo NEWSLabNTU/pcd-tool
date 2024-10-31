@@ -7,8 +7,8 @@ mod show;
 mod types;
 mod utils;
 
-use anyhow::Result;
 use clap::Parser;
+use eyre::Result;
 use opts::{Info, Opts};
 
 fn main() -> Result<()> {

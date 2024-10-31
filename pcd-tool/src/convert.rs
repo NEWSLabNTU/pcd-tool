@@ -8,8 +8,8 @@ use crate::{
     types::{BinPoint, FileFormat},
     utils::{build_velodyne_config, guess_file_format},
 };
-use anyhow::{anyhow, bail, ensure, Context, Result};
 use approx::abs_diff_eq;
+use eyre::{bail, ensure, format_err, Context, Result};
 use itertools::Itertools;
 use nalgebra as na;
 use pcd_format::{LibpclPoint, NewslabV1Point};
@@ -54,13 +54,15 @@ pub fn convert(opts: Convert) -> Result<()> {
 
     let input_format = match opts.from {
         Some(format) => format,
-        None => guess_file_format(input_path)
-            .ok_or_else(|| anyhow!("cannot guess format of input '{}'", input_path.display()))?,
+        None => guess_file_format(input_path).ok_or_else(|| {
+            format_err!("cannot guess format of input '{}'", input_path.display())
+        })?,
     };
     let output_format = match opts.to {
         Some(format) => format,
-        None => guess_file_format(output_path)
-            .ok_or_else(|| anyhow!("cannot guess format of output '{}'", output_path.display()))?,
+        None => guess_file_format(output_path).ok_or_else(|| {
+            format_err!("cannot guess format of output '{}'", output_path.display())
+        })?,
     };
 
     use FileFormat as F;
@@ -75,10 +77,10 @@ pub fn convert(opts: Convert) -> Result<()> {
         (F::VelodynePcap, F::LibpclPcd) => {
             let velodyne_model = opts
                 .velodyne_model
-                .ok_or_else(|| anyhow!("--velodyne-mode must be set"))?;
+                .ok_or_else(|| format_err!("--velodyne-mode must be set"))?;
             let velodyne_return_mode = opts
                 .velodyne_return_mode
-                .ok_or_else(|| anyhow!("--velodyne-return-mode must be set"))?;
+                .ok_or_else(|| format_err!("--velodyne-return-mode must be set"))?;
 
             velodyne_pcap_to_libpcl_pcd(
                 input_path,
@@ -106,10 +108,10 @@ pub fn convert(opts: Convert) -> Result<()> {
         (F::VelodynePcap, F::RawBin) => {
             let velodyne_model = opts
                 .velodyne_model
-                .ok_or_else(|| anyhow!("--velodyne-mode must be set"))?;
+                .ok_or_else(|| format_err!("--velodyne-mode must be set"))?;
             let velodyne_return_mode = opts
                 .velodyne_return_mode
-                .ok_or_else(|| anyhow!("--velodyne-return-mode must be set"))?;
+                .ok_or_else(|| format_err!("--velodyne-return-mode must be set"))?;
 
             velodyne_pcap_to_raw_bin(
                 input_path,
@@ -512,7 +514,7 @@ where
                     _ => unreachable!(),
                 }
 
-                anyhow::Ok(())
+                eyre::Ok(())
             })?;
         }
         R::Last => {
@@ -534,7 +536,7 @@ where
                     _ => unreachable!(),
                 }
 
-                anyhow::Ok(())
+                eyre::Ok(())
             })?;
         }
         R::Dual => {
@@ -569,7 +571,7 @@ where
                     _ => unreachable!(),
                 }
 
-                anyhow::Ok(())
+                eyre::Ok(())
             })?;
         }
     }
@@ -691,7 +693,7 @@ where
                     _ => unreachable!(),
                 }
 
-                anyhow::Ok(())
+                eyre::Ok(())
             })?;
         }
         R::Last => {
@@ -711,7 +713,7 @@ where
                     _ => unreachable!(),
                 }
 
-                anyhow::Ok(())
+                eyre::Ok(())
             })?;
         }
         R::Dual => {
@@ -732,7 +734,7 @@ where
                     _ => unreachable!(),
                 }
 
-                anyhow::Ok(())
+                eyre::Ok(())
             })?;
         }
     }

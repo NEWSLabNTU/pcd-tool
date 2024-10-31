@@ -7,7 +7,7 @@ use crate::{
     types::FileFormat,
     utils::{build_velodyne_config, guess_file_format},
 };
-use anyhow::{anyhow, Result};
+use eyre::{format_err, Result};
 use itertools::Itertools;
 use measurements::Length;
 use std::path::Path;
@@ -24,7 +24,7 @@ pub fn show(args: Show) -> Result<()> {
     let format = match format {
         Some(format) => format,
         None => guess_file_format(&input)
-            .ok_or_else(|| anyhow!("unable to guess file format of '{}'", input.display()))?,
+            .ok_or_else(|| format_err!("unable to guess file format of '{}'", input.display()))?,
     };
 
     use FileFormat as F;
@@ -32,9 +32,9 @@ pub fn show(args: Show) -> Result<()> {
         F::LibpclPcd | F::NewslabPcd => show_pcd(&input)?,
         F::VelodynePcap => {
             let velodyne_model =
-                velodyne_model.ok_or_else(|| anyhow!("--velodyne-mode must be set"))?;
+                velodyne_model.ok_or_else(|| format_err!("--velodyne-mode must be set"))?;
             let velodyne_return_mode = velodyne_return_mode
-                .ok_or_else(|| anyhow!("--velodyne-return-mode must be set"))?;
+                .ok_or_else(|| format_err!("--velodyne-return-mode must be set"))?;
 
             show_velodyne_pcap(&input, velodyne_model, velodyne_return_mode)?;
         }
@@ -112,7 +112,7 @@ where
             let record = record?;
             let point = record
                 .to_xyz()
-                .ok_or_else(|| anyhow!("No x, y or z field found"))?;
+                .ok_or_else(|| format_err!("No x, y or z field found"))?;
             let color = [1.0, 1.0, 1.0];
             Ok(gui::PointAndColor { point, color })
         })

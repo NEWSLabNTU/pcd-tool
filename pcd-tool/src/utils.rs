@@ -1,5 +1,5 @@
 use crate::types::FileFormat;
-use anyhow::{bail, Result};
+use eyre::{bail, Result};
 use std::path::Path;
 use velodyne_lidar::{ProductID, ReturnMode};
 

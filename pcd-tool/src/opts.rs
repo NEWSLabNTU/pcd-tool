@@ -1,6 +1,6 @@
 use crate::types::FileFormat;
-use anyhow::bail;
 use clap::Parser;
+use eyre::bail;
 use std::{path::PathBuf, str::FromStr};
 use velodyne_lidar::{ProductID, ReturnMode};
 
@@ -122,7 +122,7 @@ pub struct Convert {
 pub struct VelodyneReturnMode(pub ReturnMode);
 
 impl FromStr for VelodyneReturnMode {
-    type Err = anyhow::Error;
+    type Err = eyre::Error;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         let mode = match text {

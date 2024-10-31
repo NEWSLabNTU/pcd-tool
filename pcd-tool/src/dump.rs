@@ -6,7 +6,7 @@ use crate::{
     types::FileFormat,
     utils::{build_velodyne_config, guess_file_format},
 };
-use anyhow::{anyhow, Result};
+use eyre::{format_err, Result};
 use itertools::{chain, izip, Itertools};
 use pcd_rs::{Field, FieldDef};
 use std::path::Path;
@@ -23,7 +23,7 @@ pub fn dump(args: Dump) -> Result<()> {
     let format = match format {
         Some(format) => format,
         None => guess_file_format(&input)
-            .ok_or_else(|| anyhow!("unable to guess file format of '{}'", input.display()))?,
+            .ok_or_else(|| format_err!("unable to guess file format of '{}'", input.display()))?,
     };
 
     use FileFormat as F;
@@ -31,9 +31,9 @@ pub fn dump(args: Dump) -> Result<()> {
         F::LibpclPcd | F::NewslabPcd => dump_pcd(&input)?,
         F::VelodynePcap => {
             let velodyne_model =
-                velodyne_model.ok_or_else(|| anyhow!("--velodyne-mode must be set"))?;
+                velodyne_model.ok_or_else(|| format_err!("--velodyne-mode must be set"))?;
             let velodyne_return_mode = velodyne_return_mode
-                .ok_or_else(|| anyhow!("--velodyne-return-mode must be set"))?;
+                .ok_or_else(|| format_err!("--velodyne-return-mode must be set"))?;
 
             dump_velodyne_pcap(&input, velodyne_model, velodyne_return_mode)?
         }
@@ -148,7 +148,7 @@ where
                             P::Single(point) => {
                                 let PointS {
                                     laser_id,
-                                    time,
+                                    toh,
                                     azimuth,
                                     measurement:
                                         Measurement {
@@ -161,7 +161,7 @@ where
                                 vec![
                                     frame_id.into(),
                                     laser_id.into(),
-                                    format!("{time:?}").into(),
+                                    format!("{toh:?}").into(),
                                     azimuth.as_degrees().into(),
                                     distance.as_meters().into(),
                                     intensity.into(),
@@ -173,7 +173,7 @@ where
                             P::Dual(point) => {
                                 let PointD {
                                     laser_id,
-                                    time,
+                                    toh,
                                     azimuth,
                                     measurements: MeasurementDual { strongest, last },
                                 } = point;
@@ -181,7 +181,7 @@ where
                                 vec![
                                     frame_id.into(),
                                     laser_id.into(),
-                                    format!("{time:?}").into(),
+                                    format!("{toh:?}").into(),
                                     azimuth.as_degrees().into(),
                                     strongest.distance.as_meters().into(),
                                     strongest.intensity.into(),

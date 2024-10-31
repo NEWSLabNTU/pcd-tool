@@ -1,4 +1,4 @@
-use anyhow::{ensure, Result};
+use eyre::{ensure, Result};
 use std::path::Path;
 
 pub fn info(file: impl AsRef<Path>) -> Result<()> {
